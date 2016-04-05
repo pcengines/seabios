@@ -7,38 +7,12 @@
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
-#include "byteorder.h" // be32_to_cpu
 #include "config.h" // CONFIG_TPM_TIS_SHA1THRESHOLD
-#include "hw/tpm_drivers.h" // struct tpm_driver
-#include "std/tcg.h" // TCG_RESPONSE_TIMEOUT
-#include "output.h" // warn_timeout
-#include "stacks.h" // yield
 #include "string.h" // memcpy
-#include "util.h" // timer_calc_usec
+#include "util.h" // msleep
 #include "x86.h" // readl
-
-/* low level driver implementation */
-struct tpm_driver {
-    u32 *timeouts;
-    u32 *durations;
-    void (*set_timeouts)(u32 timeouts[4], u32 durations[3]);
-    u32 (*probe)(void);
-    TPMVersion (*get_tpm_version)(void);
-    u32 (*init)(void);
-    u32 (*activate)(u8 locty);
-    u32 (*ready)(void);
-    u32 (*senddata)(const u8 *const data, u32 len);
-    u32 (*readresp)(u8 *buffer, u32 *len);
-    u32 (*waitdatavalid)(void);
-    u32 (*waitrespready)(enum tpmDurationType to_t);
-};
-
-extern struct tpm_driver tpm_drivers[];
-
-#define TIS_DRIVER_IDX       0
-#define TPM_NUM_DRIVERS      1
-
-#define TPM_INVALID_DRIVER   0xf
+#include "hw/tpm_drivers.h" // struct tpm_driver
+#include "tcgbios.h" // TCG_*
 
 static const u32 tis_default_timeouts[4] = {
     TIS_DEFAULT_TIMEOUT_A,
@@ -57,6 +31,7 @@ static const u32 tpm_default_durations[3] = {
 static u32 tpm_default_dur[3];
 static u32 tpm_default_to[4];
 
+
 /* if device is not there, return '0', '1' otherwise */
 static u32 tis_probe(void)
 {
@@ -69,37 +44,7 @@ static u32 tis_probe(void)
     if ((didvid != 0) && (didvid != 0xffffffff))
         rc = 1;
 
-    /* TPM 2 has an interface register */
-    u32 ifaceid = readl(TIS_REG(0, TIS_REG_IFACE_ID));
-
-    if ((ifaceid & 0xf) != 0xf) {
-        if ((ifaceid & 0xf) == 1) {
-            /* CRB is active; no TIS */
-            return 0;
-        }
-        if ((ifaceid & (1 << 13)) == 0) {
-            /* TIS cannot be selected */
-            return 0;
-        }
-        /* write of 0 to bits 17-18 selects TIS */
-        writel(TIS_REG(0, TIS_REG_IFACE_ID), 0);
-        /* since we only support TIS, we lock it */
-        writel(TIS_REG(0, TIS_REG_IFACE_ID), (1 << 19));
-    }
-
     return rc;
-}
-
-static TPMVersion tis_get_tpm_version(void)
-{
-    /* TPM 2 has an interface register */
-    u32 ifaceid = readl(TIS_REG(0, TIS_REG_IFACE_ID));
-
-    if ((ifaceid & 0xf) == 0) {
-        /* TPM 2 */
-        return TPM_VERSION_2;
-    }
-    return TPM_VERSION_1_2;
 }
 
 static u32 tis_init(void)
@@ -148,19 +93,15 @@ static u32 tis_wait_sts(u8 locty, u32 time, u8 mask, u8 expect)
         return 0;
 
     u32 rc = 1;
-    u32 end = timer_calc_usec(time);
 
-    for (;;) {
+    while (time > 0) {
         u8 sts = readb(TIS_REG(locty, TIS_REG_STS));
         if ((sts & mask) == expect) {
             rc = 0;
             break;
         }
-        if (timer_check(end)) {
-            warn_timeout();
-            break;
-        }
-        yield();
+        msleep(1);
+        time--;
     }
     return rc;
 }
@@ -237,21 +178,18 @@ static u32 tis_senddata(const u8 *const data, u32 len)
 
     u32 rc = 0;
     u32 offset = 0;
-    u32 end_loop = 0;
+    u32 end = 0;
     u16 burst = 0;
+    u32 ctr = 0;
     u8 locty = tis_find_active_locality();
     u32 timeout_d = tpm_drivers[TIS_DRIVER_IDX].timeouts[TIS_TIMEOUT_TYPE_D];
-    u32 end = timer_calc_usec(timeout_d);
 
     do {
-        while (burst == 0) {
+        while (burst == 0 && ctr < timeout_d) {
                burst = readl(TIS_REG(locty, TIS_REG_STS)) >> 8;
             if (burst == 0) {
-                if (timer_check(end)) {
-                    warn_timeout();
-                    break;
-                }
-                yield();
+                msleep(1);
+                ctr++;
             }
         }
 
@@ -269,8 +207,8 @@ static u32 tis_senddata(const u8 *const data, u32 len)
         }
 
         if (offset == len)
-            end_loop = 1;
-    } while (end_loop == 0);
+            end = 1;
+    } while (end == 0);
 
     return rc;
 }
@@ -310,7 +248,7 @@ static u32 tis_waitdatavalid(void)
     u32 timeout_c = tpm_drivers[TIS_DRIVER_IDX].timeouts[TIS_TIMEOUT_TYPE_C];
 
     if (tis_wait_sts(locty, timeout_c, TIS_STS_VALID, TIS_STS_VALID) != 0)
-        rc = 1;
+        rc = TCG_NO_RESPONSE;
 
     return rc;
 }
@@ -328,7 +266,7 @@ static u32 tis_waitrespready(enum tpmDurationType to_t)
 
     if (tis_wait_sts(locty, timeout,
                      TIS_STS_DATA_AVAILABLE, TIS_STS_DATA_AVAILABLE) != 0)
-        rc = 1;
+        rc = TCG_NO_RESPONSE;
 
     return rc;
 }
@@ -348,72 +286,6 @@ struct tpm_driver tpm_drivers[TPM_NUM_DRIVERS] = {
             .readresp      = tis_readresp,
             .waitdatavalid = tis_waitdatavalid,
             .waitrespready = tis_waitrespready,
+            .sha1threshold = 100 * 1024,
         },
 };
-
-static u8 TPMHW_driver_to_use = TPM_INVALID_DRIVER;
-
-TPMVersion
-tpmhw_probe(void)
-{
-    unsigned int i;
-    for (i = 0; i < TPM_NUM_DRIVERS; i++) {
-        struct tpm_driver *td = &tpm_drivers[i];
-        if (td->probe() != 0) {
-            td->init();
-            TPMHW_driver_to_use = i;
-            return tis_get_tpm_version();
-        }
-    }
-    return TPM_VERSION_NONE;
-}
-
-int
-tpmhw_is_present(void)
-{
-    return TPMHW_driver_to_use != TPM_INVALID_DRIVER;
-}
-
-int
-tpmhw_transmit(u8 locty, struct tpm_req_header *req,
-               void *respbuffer, u32 *respbufferlen,
-               enum tpmDurationType to_t)
-{
-    if (TPMHW_driver_to_use == TPM_INVALID_DRIVER)
-        return -1;
-
-    struct tpm_driver *td = &tpm_drivers[TPMHW_driver_to_use];
-
-    u32 irc = td->activate(locty);
-    if (irc != 0) {
-        /* tpm could not be activated */
-        return -1;
-    }
-
-    irc = td->senddata((void*)req, be32_to_cpu(req->totlen));
-    if (irc != 0)
-        return -1;
-
-    irc = td->waitdatavalid();
-    if (irc != 0)
-        return -1;
-
-    irc = td->waitrespready(to_t);
-    if (irc != 0)
-        return -1;
-
-    irc = td->readresp(respbuffer, respbufferlen);
-    if (irc != 0)
-        return -1;
-
-    td->ready();
-
-    return 0;
-}
-
-void
-tpmhw_set_timeouts(u32 timeouts[4], u32 durations[3])
-{
-    struct tpm_driver *td = &tpm_drivers[TPMHW_driver_to_use];
-    td->set_timeouts(timeouts, durations);
-}

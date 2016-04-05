@@ -19,7 +19,6 @@
 #include "malloc.h" // free
 #include "output.h" // dprintf
 #include "pci.h" // pci_config_readl
-#include "pcidevice.h" // pci_find_capability
 #include "pci_regs.h" // PCI_BASE_ADDRESS_0
 #include "string.h" // memset
 #include "virtio-pci.h"
@@ -101,14 +100,16 @@ void vp_reset(struct vp_device *vp)
 void vp_notify(struct vp_device *vp, struct vring_virtqueue *vq)
 {
     if (vp->use_modern) {
-        u32 offset = vq->queue_notify_off * vp->notify_off_multiplier;
+        u32 addr = vp->notify.addr +
+            vq->queue_notify_off *
+            vp->notify_off_multiplier;
         if (vp->notify.is_io) {
-            outw(vq->queue_index, vp->notify.ioaddr + offset);
+            outw(vq->queue_index, addr);
         } else {
-            writew(vp->notify.memaddr + offset, vq->queue_index);
+            writew((void*)addr, vq->queue_index);
         }
         dprintf(9, "vp notify %x (%d) -- 0x%x\n",
-                vp->notify.ioaddr, 2, vq->queue_index);
+                addr, 2, vq->queue_index);
     } else {
         vp_write(&vp->legacy, virtio_pci_legacy, queue_notify, vq->queue_index);
     }
@@ -207,7 +208,7 @@ void vp_init_simple(struct vp_device *vp, struct pci_device *pci)
 {
     u8 cap = pci_find_capability(pci, PCI_CAP_ID_VNDR, 0);
     struct vp_cap *vp_cap;
-    u32 offset, mul;
+    u32 addr, offset, mul;
     u8 type;
 
     memset(vp, 0, sizeof(*vp));
@@ -239,23 +240,19 @@ void vp_init_simple(struct vp_device *vp, struct pci_device *pci)
                                            offsetof(struct virtio_pci_cap, bar));
             offset = pci_config_readl(pci->bdf, cap +
                                       offsetof(struct virtio_pci_cap, offset));
-            u32 bar = PCI_BASE_ADDRESS_0 + 4 * vp_cap->bar;
-            if (pci_config_readl(pci->bdf, bar) & PCI_BASE_ADDRESS_SPACE_IO) {
+            addr = pci_config_readl(pci->bdf, PCI_BASE_ADDRESS_0 + 4 * vp_cap->bar);
+            if (addr & PCI_BASE_ADDRESS_SPACE_IO) {
                 vp_cap->is_io = 1;
-                u32 addr = pci_enable_iobar(pci, bar);
-                if (!addr)
-                    return;
-                vp_cap->ioaddr = addr + offset;
+                addr &= PCI_BASE_ADDRESS_IO_MASK;
             } else {
                 vp_cap->is_io = 0;
-                void *addr = pci_enable_membar(pci, bar);
-                if (!addr)
-                    return;
-                vp_cap->memaddr = addr + offset;
+                addr &= PCI_BASE_ADDRESS_MEM_MASK;
             }
-            dprintf(3, "pci dev %pP virtio cap at 0x%x type %d "
+            vp_cap->addr = addr + offset;
+            dprintf(3, "pci dev %x:%x virtio cap at 0x%x type %d "
                     "bar %d at 0x%08x off +0x%04x [%s]\n",
-                    pci, vp_cap->cap, type, vp_cap->bar, vp_cap->ioaddr, offset,
+                    pci_bdf_to_bus(pci->bdf), pci_bdf_to_dev(pci->bdf),
+                    vp_cap->cap, type, vp_cap->bar, addr, offset,
                     vp_cap->is_io ? "io" : "mmio");
         }
 
@@ -263,19 +260,20 @@ void vp_init_simple(struct vp_device *vp, struct pci_device *pci)
     }
 
     if (vp->common.cap && vp->notify.cap && vp->isr.cap && vp->device.cap) {
-        dprintf(1, "pci dev %pP using modern (1.0) virtio mode\n", pci);
+        dprintf(1, "pci dev %x:%x using modern (1.0) virtio mode\n",
+                pci_bdf_to_bus(pci->bdf), pci_bdf_to_dev(pci->bdf));
         vp->use_modern = 1;
     } else {
-        dprintf(1, "pci dev %pP using legacy (0.9.5) virtio mode\n", pci);
+        dprintf(1, "pci dev %x:%x using legacy (0.9.5) virtio mode\n",
+                pci_bdf_to_bus(pci->bdf), pci_bdf_to_dev(pci->bdf));
         vp->legacy.bar = 0;
-        vp->legacy.ioaddr = pci_enable_iobar(pci, PCI_BASE_ADDRESS_0);
-        if (!vp->legacy.ioaddr)
-            return;
+        vp->legacy.addr = pci_config_readl(pci->bdf, PCI_BASE_ADDRESS_0) &
+            PCI_BASE_ADDRESS_IO_MASK;
         vp->legacy.is_io = 1;
     }
 
     vp_reset(vp);
-    pci_enable_busmaster(pci);
+    pci_config_maskw(pci->bdf, PCI_COMMAND, 0, PCI_COMMAND_MASTER);
     vp_set_status(vp, VIRTIO_CONFIG_S_ACKNOWLEDGE |
                   VIRTIO_CONFIG_S_DRIVER );
 }

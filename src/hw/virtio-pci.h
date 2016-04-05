@@ -86,10 +86,7 @@ typedef struct virtio_pci_isr {
 /* --- driver structs ----------------------------------------------- */
 
 struct vp_cap {
-    union {
-        void *memaddr;
-        u32 ioaddr;
-    };
+    u32 addr;
     u8 cap;
     u8 bar;
     u8 is_io;
@@ -103,10 +100,10 @@ struct vp_device {
 
 static inline u64 _vp_read(struct vp_cap *cap, u32 offset, u8 size)
 {
+    u32 addr = cap->addr + offset;
     u64 var;
 
     if (cap->is_io) {
-        u32 addr = cap->ioaddr + offset;
         switch (size) {
         case 8:
             var = inl(addr);
@@ -125,34 +122,34 @@ static inline u64 _vp_read(struct vp_cap *cap, u32 offset, u8 size)
             var = 0;
         }
     } else {
-        void *addr = cap->memaddr + offset;
         switch (size) {
         case 8:
-            var = readl(addr);
-            var |= (u64)readl(addr+4) << 32;
+            var = readl((void*)addr);
+            var |= (u64)readl((void*)(addr+4)) << 32;
             break;
         case 4:
-            var = readl(addr);
+            var = readl((void*)addr);
             break;
         case 2:
-            var = readw(addr);
+            var = readw((void*)addr);
             break;
         case 1:
-            var = readb(addr);
+            var = readb((void*)addr);
             break;
         default:
             var = 0;
         }
     }
-    dprintf(9, "vp read   %x (%d) -> 0x%llx\n", cap->ioaddr + offset, size, var);
+    dprintf(9, "vp read   %x (%d) -> 0x%llx\n", addr, size, var);
     return var;
 }
 
 static inline void _vp_write(struct vp_cap *cap, u32 offset, u8 size, u64 var)
 {
-    dprintf(9, "vp write  %x (%d) <- 0x%llx\n", cap->ioaddr + offset, size, var);
+    u32 addr = cap->addr + offset;
+
+    dprintf(9, "vp write  %x (%d) <- 0x%llx\n", addr, size, var);
     if (cap->is_io) {
-        u32 addr = cap->ioaddr + offset;
         switch (size) {
         case 4:
             outl(var, addr);
@@ -165,16 +162,15 @@ static inline void _vp_write(struct vp_cap *cap, u32 offset, u8 size, u64 var)
             break;
         }
     } else {
-        void *addr = cap->memaddr + offset;
         switch (size) {
         case 4:
-            writel(addr, var);
+            writel((void*)addr, var);
             break;
         case 2:
-            writew(addr, var);
+            writew((void*)addr, var);
             break;
         case 1:
-            writeb(addr, var);
+            writeb((void*)addr, var);
             break;
         }
     }

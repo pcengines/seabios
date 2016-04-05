@@ -76,6 +76,16 @@ handle_1400(struct bregs *regs)
     u16 addr = getComAddr(regs);
     if (!addr)
         return;
+
+    if (CONFIG_SEABIOS_SERIAL_CONSOLE) {
+        /* Don't let the OS change the baud rate of the  */
+        /* console. Just indicate success and return */
+        if (addr == CONFIG_DEBUG_SERIAL_PORT) {
+            set_success(regs);
+            return;
+        }
+    }
+
     outb(inb(addr+SEROFF_LCR) | 0x80, addr+SEROFF_LCR);
     if ((regs->al & 0xE0) == 0) {
         outb(0x17, addr+SEROFF_DLL);

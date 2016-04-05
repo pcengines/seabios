@@ -10,7 +10,6 @@
 #include "config.h" // CONFIG_*
 #include "fw/paravirt.h" // qemu_cfg_show_boot_menu
 #include "hw/pci.h" // pci_bdf_to_*
-#include "hw/pcidevice.h" // struct pci_device
 #include "hw/rtc.h" // rtc_read
 #include "hw/usb.h" // struct usbdevice_s
 #include "list.h" // hlist_node
@@ -428,7 +427,7 @@ get_raw_keystroke(void)
 }
 
 // Read a keystroke - waiting up to 'msec' milliseconds.
-int
+static int
 get_keystroke(int msec)
 {
     u32 end = irqtimer_calc(msec);
@@ -487,9 +486,6 @@ interactive_bootmenu(void)
         printf("%d. %s\n", maxmenu
                , strtcpy(desc, pos->description, ARRAY_SIZE(desc)));
     }
-    if (tpm_can_show_menu()) {
-        printf("\nt. TPM Configuration\n");
-    }
 
     // Get key press.  If the menu key is ESC, do not restart boot unless
     // 1.5 seconds have passed.  Otherwise users (trained by years of
@@ -500,10 +496,6 @@ interactive_bootmenu(void)
         scan_code = get_keystroke(1000);
         if (scan_code == 1 && !irqtimer_check(esc_accepted_time))
             continue;
-        if (tpm_can_show_menu() && scan_code == 20 /* t */) {
-            printf("\n");
-            tpm_menu();
-        }
         if (scan_code >= 1 && scan_code <= maxmenu+1)
             break;
     }

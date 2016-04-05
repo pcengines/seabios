@@ -16,8 +16,7 @@
 #include "config.h" // CONFIG_*
 #include "malloc.h" // free
 #include "output.h" // dprintf
-#include "pci.h" // pci_config_readl
-#include "pcidevice.h" // foreachpci
+#include "pci.h" // foreachpci
 #include "pci_ids.h" // PCI_DEVICE_ID_XXX
 #include "pci_regs.h" // PCI_VENDOR_ID
 #include "stacks.h" // yield
@@ -225,8 +224,9 @@ megasas_add_lun(struct pci_device *pci, u32 iobase, u8 target, u8 lun)
         free(mlun);
         return -1;
     }
-    name = znprintf(MAXDESCSIZE, "MegaRAID SAS (PCI %pP) LD %d:%d"
-                    , pci, target, lun);
+    name = znprintf(36, "MegaRAID SAS (PCI %02x:%02x.%x) LD %d:%d",
+                    pci_bdf_to_bus(pci->bdf), pci_bdf_to_dev(pci->bdf),
+                    pci_bdf_to_fn(pci->bdf), target, lun);
     prio = bootprio_find_scsi_device(pci, target, lun);
     ret = scsi_drive_setup(&mlun->drive, name, prio);
     free(name);
@@ -359,16 +359,20 @@ static int megasas_transition_to_ready(struct pci_device *pci, u32 ioaddr)
 static void
 init_megasas(struct pci_device *pci)
 {
-    u32 bar = PCI_BASE_ADDRESS_2;
-    if (!(pci_config_readl(pci->bdf, bar) & PCI_BASE_ADDRESS_IO_MASK))
-        bar = PCI_BASE_ADDRESS_0;
-    u32 iobase = pci_enable_iobar(pci, bar);
+    u16 bdf = pci->bdf;
+    u32 iobase = pci_config_readl(pci->bdf, PCI_BASE_ADDRESS_2)
+        & PCI_BASE_ADDRESS_IO_MASK;
+
     if (!iobase)
-        return;
-    pci_enable_busmaster(pci);
+        iobase = pci_config_readl(pci->bdf, PCI_BASE_ADDRESS_0)
+            & PCI_BASE_ADDRESS_IO_MASK;
 
-    dprintf(1, "found MegaRAID SAS at %pP, io @ %x\n", pci, iobase);
+    dprintf(1, "found MegaRAID SAS at %02x:%02x.%x, io @ %x\n",
+            pci_bdf_to_bus(bdf), pci_bdf_to_dev(bdf),
+            pci_bdf_to_fn(bdf), iobase);
 
+    pci_config_maskw(pci->bdf, PCI_COMMAND, 0,
+                     PCI_COMMAND_IO | PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER);
     // reset
     if (megasas_transition_to_ready(pci, iobase) == 0)
         megasas_scan_target(pci, iobase);

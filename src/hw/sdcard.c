@@ -1,17 +1,18 @@
 // PCI SD Host Controller Interface
 //
 // Copyright (C) 2014  Kevin O'Connor <kevin@koconnor.net>
+// Copyright (C) 2016  Eltan B.V.
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "block.h" // struct drive_s
 #include "malloc.h" // malloc_fseg
 #include "output.h" // znprintf
-#include "pcidevice.h" // foreachpci
+#include "pci.h" // pci_config_readl
 #include "pci_ids.h" // PCI_CLASS_SYSTEM_SDHCI
 #include "pci_regs.h" // PCI_BASE_ADDRESS_0
 #include "romfile.h" // romfile_findprefix
-#include "stacks.h" // yield
+#include "stacks.h" // wait_preempt
 #include "std/disk.h" // DISK_RET_SUCCESS
 #include "string.h" // memset
 #include "util.h" // boot_add_hd
@@ -95,6 +96,10 @@ struct sdhci_s {
 #define ST_READ       (1<<4)
 #define ST_MULTIPLE   (1<<5)
 
+// SDHCI SDHC_CTRL1 Flags
+#define CTRL1_HIGH_SPEED_EN (1<<2)
+#define CTRL1_DAT_TX_WIDTH (1<<1)	// 4 BIT IF SET 0 BIT IF CLEAR (DEFAULT)
+
 // SDHCI capabilities flags
 #define SD_CAPLO_V33             (1<<24)
 #define SD_CAPLO_V30             (1<<25)
@@ -154,7 +159,6 @@ sdcard_waitw(u16 *reg, u16 mask)
         if (v & mask)
             return v;
         if (timer_check(end)) {
-            dprintf(1, "scard_waitw: %p %x %x\n", reg, mask, v);
             warn_timeout();
             return -1;
         }
@@ -271,8 +275,10 @@ sdcard_readwrite(struct disk_op_s *op, int iswrite)
     if (op->count > 1)
         cmd = iswrite ? SC_WRITE_MULTIPLE : SC_READ_MULTIPLE;
     int ret = sdcard_pio_transfer(drive, cmd, op->lba, op->buf_fl, op->count);
-    if (ret)
+    if (ret) {
+        dprintf(3, "sdcard_readwrite block %llu count %d returned DISK_RET_EBADTRACK\n", op->lba, op->count);
         return DISK_RET_EBADTRACK;
+    }
     return DISK_RET_SUCCESS;
 }
 
@@ -388,6 +394,7 @@ static int
 sdcard_card_setup(struct sddrive_s *drive, int volt, int prio)
 {
     struct sdhci_s *regs = drive->regs;
+
     // Set controller to initialization clock rate
     int ret = sdcard_set_frequency(regs, 400);
     if (ret)
@@ -458,9 +465,17 @@ sdcard_card_setup(struct sddrive_s *drive, int volt, int prio)
     if (ret)
         return ret;
     // Set controller to data transfer clock rate
-    ret = sdcard_set_frequency(regs, 25000);
+//    ret = sdcard_set_frequency(regs, 25000);
+  //  ret = sdcard_set_frequency(regs, 50000);
+    ret = sdcard_set_frequency(regs, 200000);
     if (ret)
         return ret;
+
+    u32 ctrl1 = readl(&regs->host_control);
+    ctrl1 |= CTRL1_HIGH_SPEED_EN;
+    writel(&regs->host_control, ctrl1);
+    dprintf(3, "host_control contains 0x%08x\n", ctrl1);
+
     // Register drive
     ret = sdcard_get_capacity(drive, csd);
     if (ret)
@@ -525,12 +540,14 @@ static void
 sdcard_pci_setup(void *data)
 {
     struct pci_device *pci = data;
+    wait_preempt();  // Avoid pci_config_readl when preempting
     // XXX - bars dependent on slot index register in pci config space
-    struct sdhci_s *regs = pci_enable_membar(pci, PCI_BASE_ADDRESS_0);
-    if (!regs)
-        return;
+    u32 regs = pci_config_readl(pci->bdf, PCI_BASE_ADDRESS_0);
+    regs &= PCI_BASE_ADDRESS_MEM_MASK;
+    pci_config_maskw(pci->bdf, PCI_COMMAND, 0,
+                     PCI_COMMAND_IO | PCI_COMMAND_MEMORY | PCI_COMMAND_MASTER);
     int prio = bootprio_find_pci_device(pci);
-    sdcard_controller_setup(regs, prio);
+    sdcard_controller_setup((void*)regs, prio);
 }
 
 static void
@@ -550,17 +567,12 @@ sdcard_setup(void)
         return;
 
     struct romfile_s *file = NULL;
-    int num_romfiles = 0;
     for (;;) {
         file = romfile_findprefix("etc/sdcard", file);
         if (!file)
             break;
         run_thread(sdcard_romfile_setup, file);
-        num_romfiles++;
     }
-    if (num_romfiles)
-        // only scan for PCI controllers if etc/sdcard not used
-        return;
 
     struct pci_device *pci;
     foreachpci(pci) {

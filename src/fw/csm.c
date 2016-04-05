@@ -8,8 +8,7 @@
 #include "config.h" // CONFIG_*
 #include "e820map.h" // e820_add
 #include "farptr.h" // MAKE_FLATPTR
-#include "hw/pci.h" // pci_to_bdf
-#include "hw/pcidevice.h" // pci_probe_devices
+#include "hw/pci.h" // pci_probe_devices
 #include "hw/pic.h" // pic_irqmask_read
 #include "malloc.h" // malloc_csm_preinit
 #include "memmap.h" // SYMBOL
@@ -290,7 +289,6 @@ handle_csm(struct bregs *regs)
 
     dprintf(3, "handle_csm regs %p AX=%04x\n", regs, regs->ax);
 
-    code_mutable_preinit();
     pic_irqmask_write(PICMask);
 
     switch(regs->ax) {

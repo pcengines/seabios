@@ -294,6 +294,9 @@ clock_update(void)
     // Check for internal events.
     floppy_tick();
     usb_check_event();
+#if CONFIG_SEABIOS_SERIAL_CONSOLE
+    uart_keyboard_handler();
+#endif
     ps2_check_event();
 }
 

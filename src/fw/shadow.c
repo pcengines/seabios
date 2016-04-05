@@ -123,14 +123,12 @@ make_bios_writable(void)
         if (vendor == PCI_VENDOR_ID_INTEL
             && device == PCI_DEVICE_ID_INTEL_82441) {
             make_bios_writable_intel(bdf, I440FX_PAM0);
-            code_mutable_preinit();
             ShadowBDF = bdf;
             return;
         }
         if (vendor == PCI_VENDOR_ID_INTEL
             && device == PCI_DEVICE_ID_INTEL_Q35_MCH) {
             make_bios_writable_intel(bdf, Q35_HOST_BRIDGE_PAM0);
-            code_mutable_preinit();
             ShadowBDF = bdf;
             return;
         }
@@ -165,18 +163,7 @@ qemu_prep_reset(void)
         return;
     // QEMU doesn't map 0xc0000-0xfffff back to the original rom on a
     // reset, so do that manually before invoking a hard reset.
-    void *cstart = VSYMBOL(code32flat_start), *cend = VSYMBOL(code32flat_end);
-    void *hrp = &HaveRunPost;
-    if (readl(hrp + BIOS_SRC_OFFSET)) {
-        // Some old versions of KVM don't store a pristine copy of the
-        // BIOS in high memory.  Try to shutdown the machine instead.
-        dprintf(1, "Unable to hard-reboot machine - attempting shutdown.\n");
-        apm_shutdown();
-    }
-    // Copy the BIOS making sure to only reset HaveRunPost at end
     make_bios_writable();
-    memcpy(cstart, cstart + BIOS_SRC_OFFSET, hrp - cstart);
-    memcpy(hrp + 4, hrp + 4 + BIOS_SRC_OFFSET, cend - (hrp + 4));
-    barrier();
-    HaveRunPost = 0;
+    memcpy(VSYMBOL(code32flat_start), VSYMBOL(code32flat_start) + BIOS_SRC_OFFSET
+           , SYMBOL(code32flat_end) - SYMBOL(code32flat_start));
 }

@@ -27,6 +27,11 @@ choice
 
 endchoice
 
+	config	SEABIOS_SERIAL_CONSOLE
+		bool "Enable serial console for headless systems"
+		default	y
+
+
     config QEMU_HARDWARE
         bool "Support hardware found on emulators (QEMU/Xen/KVM/Bochs)" if !QEMU
         default n
@@ -208,12 +213,6 @@ menu "Hardware support"
         default y
         help
             Support boot from LSI MegaRAID SAS scsi storage.
-    config MPT_SCSI
-        depends on DRIVES && QEMU_HARDWARE
-        bool "LSI MPT Fusion controllers"
-        default y
-        help
-            Support boot from LSI MPT Fusion scsi storage.
     config FLOPPY
         depends on DRIVES && HARDWARE_IRQ
         bool "Floppy controller"
@@ -529,7 +528,7 @@ menu "Debugging"
             Set to zero to disable debugging.
 
     config DEBUG_SERIAL
-        depends on DEBUG_LEVEL != 0
+        depends on SEABIOS_SERIAL_CONSOLE || DEBUG_LEVEL != 0
         bool "Serial port debugging"
         default n
         help

@@ -9,10 +9,10 @@
 #include "block.h" // process_op
 #include "hw/ata.h" // process_ata_op
 #include "hw/ahci.h" // process_ahci_op
+#include "hw/blockcmd.h" // cdb_*
 #include "hw/esp-scsi.h" // esp_scsi_process_op
 #include "hw/lsi-scsi.h" // lsi_scsi_process_op
 #include "hw/megasas.h" // megasas_process_op
-#include "hw/mpt-scsi.h" // mpt_scsi_process_op
 #include "hw/pci.h" // pci_bdf_to_bus
 #include "hw/pvscsi.h" // pvscsi_process_op
 #include "hw/rtc.h" // rtc_read
@@ -162,7 +162,7 @@ setup_translation(struct drive_s *drive)
     // clip to 1024 cylinders in lchs
     if (cylinders > 1024)
         cylinders = 1024;
-    dprintf(1, "drive %p: PCHS=%u/%d/%d translation=%s LCHS=%d/%d/%d s=%u\n"
+    dprintf(1, "drive %p: PCHS=%u/%d/%d translation=%s LCHS=%d/%d/%d s=%d\n"
             , drive
             , drive->pchs.cylinder, drive->pchs.head, drive->pchs.sector
             , desc
@@ -487,23 +487,6 @@ fill_edd(struct segoff_s edd, struct drive_s *drive_gf)
  * Disk driver dispatch
  ****************************************************************/
 
-void
-block_setup(void)
-{
-    floppy_setup();
-    ata_setup();
-    ahci_setup();
-    sdcard_setup();
-    ramdisk_setup();
-    virtio_blk_setup();
-    virtio_scsi_setup();
-    lsi_scsi_setup();
-    esp_scsi_setup();
-    megasas_setup();
-    pvscsi_setup();
-    mpt_scsi_setup();
-}
-
 // Fallback handler for command requests not implemented by drivers
 int
 default_process_op(struct disk_op_s *op)
@@ -538,8 +521,6 @@ process_op_both(struct disk_op_s *op)
         return esp_scsi_process_op(op);
     case DTYPE_MEGASAS:
         return megasas_process_op(op);
-    case DTYPE_MPT_SCSI:
-        return mpt_scsi_process_op(op);
     default:
         if (!MODESEGMENT)
             return DISK_RET_EPARAM;

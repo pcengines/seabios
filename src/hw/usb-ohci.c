@@ -9,12 +9,11 @@
 #include "malloc.h" // free
 #include "memmap.h" // PAGE_SIZE
 #include "output.h" // dprintf
-#include "pcidevice.h" // foreachpci
+#include "pci.h" // pci_bdf_to_bus
 #include "pci_ids.h" // PCI_CLASS_SERIAL_USB_OHCI
 #include "pci_regs.h" // PCI_BASE_ADDRESS_0
 #include "string.h" // memset
 #include "usb.h" // struct usb_s
-#include "usb-ehci.h" // ehci_wait_controllers
 #include "usb-ohci.h" // struct ohci_hcca
 #include "util.h" // msleep
 #include "x86.h" // readl
@@ -97,8 +96,6 @@ static int
 check_ohci_ports(struct usb_ohci_s *cntl)
 {
     ASSERT32FLAT();
-    // Wait for ehci init - in case this is a "companion controller"
-    ehci_wait_controllers();
     // Turn on power for all devices on roothub.
     u32 rha = readl(&cntl->regs->roothub_a);
     rha &= ~(RH_A_PSM | RH_A_OCPM);
@@ -268,10 +265,6 @@ free:
 static void
 ohci_controller_setup(struct pci_device *pci)
 {
-    struct ohci_regs *regs = pci_enable_membar(pci, PCI_BASE_ADDRESS_0);
-    if (!regs)
-        return;
-
     struct usb_ohci_s *cntl = malloc_tmphigh(sizeof(*cntl));
     if (!cntl) {
         warn_noalloc();
@@ -280,11 +273,19 @@ ohci_controller_setup(struct pci_device *pci)
     memset(cntl, 0, sizeof(*cntl));
     cntl->usb.pci = pci;
     cntl->usb.type = USB_TYPE_OHCI;
-    cntl->regs = regs;
 
-    dprintf(1, "OHCI init on dev %pP (regs=%p)\n", pci, cntl->regs);
+    wait_preempt();  // Avoid pci_config_readl when preempting
+    u16 bdf = pci->bdf;
+    u32 baseaddr = pci_config_readl(bdf, PCI_BASE_ADDRESS_0);
+    cntl->regs = (void*)(baseaddr & PCI_BASE_ADDRESS_MEM_MASK);
 
-    pci_enable_busmaster(pci);
+    dprintf(1, "OHCI init on dev %02x:%02x.%x (regs=%p)\n"
+            , pci_bdf_to_bus(bdf), pci_bdf_to_dev(bdf)
+            , pci_bdf_to_fn(bdf), cntl->regs);
+
+    // Enable bus mastering and memory access.
+    pci_config_maskw(bdf, PCI_COMMAND
+                     , 0, PCI_COMMAND_MASTER|PCI_COMMAND_MEMORY);
 
     // XXX - check for and disable SMM control?
 

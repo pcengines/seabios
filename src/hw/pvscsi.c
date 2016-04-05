@@ -13,7 +13,7 @@
 #include "malloc.h" // free
 #include "memmap.h" // PAGE_SHIFT, virt_to_phys
 #include "output.h" // dprintf
-#include "pcidevice.h" // foreachpci
+#include "pci.h" // foreachpci
 #include "pci_ids.h" // PCI_DEVICE_ID_VMWARE_PVSCSI
 #include "pci_regs.h" // PCI_VENDOR_ID
 #include "pvscsi.h" // pvscsi_setup
@@ -272,7 +272,9 @@ pvscsi_add_lun(struct pci_device *pci, void *iobase,
     plun->iobase = iobase;
     plun->ring_dsc = ring_dsc;
 
-    char *name = znprintf(MAXDESCSIZE, "pvscsi %pP %d:%d", pci, target, lun);
+    char *name = znprintf(16, "pvscsi %02x:%02x.%x %d:%d",
+                          pci_bdf_to_bus(pci->bdf), pci_bdf_to_dev(pci->bdf),
+                          pci_bdf_to_fn(pci->bdf), target, lun);
     int prio = bootprio_find_scsi_device(pci, target, lun);
     int ret = scsi_drive_setup(&plun->drive, name, prio);
     free(name);
@@ -296,18 +298,21 @@ pvscsi_scan_target(struct pci_device *pci, void *iobase,
 static void
 init_pvscsi(struct pci_device *pci)
 {
-    void *iobase = pci_enable_membar(pci, PCI_BASE_ADDRESS_0);
-    if (!iobase)
-        return;
-    pci_enable_busmaster(pci);
+    struct pvscsi_ring_dsc_s *ring_dsc = NULL;
+    int i;
+    u16 bdf = pci->bdf;
+    void *iobase = (void*)(pci_config_readl(pci->bdf, PCI_BASE_ADDRESS_0)
+                           & PCI_BASE_ADDRESS_MEM_MASK);
 
-    dprintf(1, "found pvscsi at %pP, io @ %p\n", pci, iobase);
+    pci_config_maskw(bdf, PCI_COMMAND, 0, PCI_COMMAND_MASTER);
+
+    dprintf(1, "found pvscsi at %02x:%02x.%x, io @ %p\n",
+            pci_bdf_to_bus(bdf), pci_bdf_to_dev(bdf),
+            pci_bdf_to_fn(bdf), iobase);
 
     pvscsi_write_cmd_desc(iobase, PVSCSI_CMD_ADAPTER_RESET, NULL, 0);
 
-    struct pvscsi_ring_dsc_s *ring_dsc = NULL;
     pvscsi_init_rings(iobase, &ring_dsc);
-    int i;
     for (i = 0; i < 7; i++)
         pvscsi_scan_target(pci, iobase, ring_dsc, i);
 

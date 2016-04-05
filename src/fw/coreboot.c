@@ -1,6 +1,7 @@
 // Coreboot interface support.
 //
 // Copyright (C) 2008,2009  Kevin O'Connor <kevin@koconnor.net>
+// Copyright (C) 2015-2016  Eltan B.V.
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
@@ -8,7 +9,7 @@
 #include "byteorder.h" // be32_to_cpu
 #include "config.h" // CONFIG_*
 #include "e820map.h" // e820_add
-#include "hw/pcidevice.h" // pci_probe_devices
+#include "hw/pci.h" // pci_probe_devices
 #include "lzmadecode.h" // LzmaDecode
 #include "malloc.h" // free
 #include "output.h" // dprintf
@@ -17,6 +18,7 @@
 #include "stacks.h" // yield
 #include "string.h" // memset
 #include "util.h" // coreboot_preinit
+#include "coreboot.h" // cbfs_romfile overrides
 
 
 /****************************************************************
@@ -33,6 +35,14 @@ struct cb_header {
 };
 
 #define CB_SIGNATURE 0x4f49424C // "LBIO"
+
+//
+// Generic cb record
+//
+struct cb_record {
+	u32 tag;
+	u32 size;
+};
 
 struct cb_memory_range {
     u64 start;
@@ -108,6 +118,7 @@ static struct cb_header *
 find_cb_header(u32 addr, int len)
 {
     u32 end = addr + len;
+
     for (; addr < end; addr += 16) {
         struct cb_header *cbh = (void*)addr;
         if (GET_FARVAR(0, cbh->signature) != CB_SIGNATURE)
@@ -125,7 +136,7 @@ find_cb_header(u32 addr, int len)
     return NULL;
 }
 
-// Try to find the coreboot memory table in the given coreboot table.
+// Try to find the specified coreboot record
 void *
 find_cb_subtable(struct cb_header *cbh, u32 tag)
 {
@@ -133,10 +144,10 @@ find_cb_subtable(struct cb_header *cbh, u32 tag)
     u32 count = GET_FARVAR(0, cbh->table_entries);
     int i;
     for (i=0; i<count; i++) {
-        struct cb_memory *cbm = (void*)tbl;
-        tbl += GET_FARVAR(0, cbm->size);
-        if (GET_FARVAR(0, cbm->tag) == tag)
-            return cbm;
+        struct cb_record *cbr = (void*)tbl;
+        tbl += GET_FARVAR(0, cbr->size);
+        if (GET_FARVAR(0, cbr->tag) == tag)
+            return cbr;
     }
     return NULL;
 }
@@ -159,6 +170,51 @@ find_cb_table(void)
 
 static struct cb_memory *CBMemTable;
 const char *CBvendor = "", *CBpart = "";
+
+char *
+get_cbmem_file( char * filename, int * size)
+{
+    char *f = NULL;
+    struct cbfile_record *cbf = NULL;
+    struct file_container *cbmem_file_ptr =NULL;
+    unsigned long temp;
+
+    dprintf(3, "looking for file \"%s\" in cbmem\n", filename);
+
+    if ( size ) *size = 0;
+
+    // First we need to find the coreboot table
+    struct cb_header *cbh = find_cb_table();
+
+    if (cbh) {
+        //
+    	// Now find the file entry
+    	//
+        cbf = find_cb_subtable(cbh, CB_TAG_FILE);
+    }
+
+    cbmem_file_ptr = (struct file_container *) (u32) cbf->forward;
+
+    /*
+     * If we found the FILE table we now need to walk through each entry.
+     */
+	while (cbmem_file_ptr->file_signature == CBMEM_ID_FILE) {
+
+		if (!strcmp( cbmem_file_ptr->file_name, filename ) ) {
+
+			f = (char *)cbmem_file_ptr->file_data;
+			if ( size ) *size = cbmem_file_ptr->file_size;
+			break;
+		}
+		dprintf(3, "found file \"%s\" in cbmem\n", cbmem_file_ptr->file_name);
+		temp = (u32) cbmem_file_ptr + sizeof(struct file_container) + cbmem_file_ptr->file_size;
+		temp = ALIGN(temp, 16);
+		cbmem_file_ptr = (struct file_container *) temp;
+	}
+    return f;
+}
+
+
 
 // Populate max ram and e820 map info by scanning for a coreboot table.
 void
@@ -194,8 +250,8 @@ coreboot_preinit(void)
     struct cb_cbmem_ref *cbref = find_cb_subtable(cbh, CB_TAG_CBMEM_CONSOLE);
     if (cbref) {
         cbcon = (void*)(u32)cbref->cbmem_addr;
-        debug_banner();
-        dprintf(1, "Found coreboot cbmem console @ %llx\n", cbref->cbmem_addr);
+        // debug_banner();
+        dprintf(3, "Found coreboot cbmem console @ %llx\n", cbref->cbmem_addr);
     }
 
     struct cb_mainboard *cbmb = find_cb_subtable(cbh, CB_TAG_MAINBOARD);
@@ -204,6 +260,8 @@ coreboot_preinit(void)
         CBpart = &cbmb->strings[cbmb->part_idx];
         dprintf(1, "Found mainboard %s %s\n", CBvendor, CBpart);
     }
+
+ //   get_cbmem_bootorder_file();  // TEST
 
     return;
 
@@ -421,10 +479,6 @@ coreboot_cbfs_init(void)
         return;
 
     struct cbfs_header *hdr = *(void **)(CONFIG_CBFS_LOCATION - 4);
-    if ((u32)hdr & 0x03) {
-        dprintf(1, "Invalid CBFS pointer %p\n", hdr);
-        return;
-    }
     if (CONFIG_CBFS_LOCATION && (u32)hdr > CONFIG_CBFS_LOCATION)
         // Looks like the pointer is relative to CONFIG_CBFS_LOCATION
         hdr = (void*)hdr + CONFIG_CBFS_LOCATION;
@@ -433,7 +487,7 @@ coreboot_cbfs_init(void)
                 , hdr, hdr->magic, cpu_to_be32(CBFS_HEADER_MAGIC));
         return;
     }
-    dprintf(1, "Found CBFS header at %p\n", hdr);
+    dprintf(3, "Found CBFS header at %p\n", hdr);
 
     u32 romsize = be32_to_cpu(hdr->romsize);
     u32 romstart = CONFIG_CBFS_LOCATION - romsize;

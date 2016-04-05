@@ -3,7 +3,6 @@
 
 // usb-ehci.c
 void ehci_setup(void);
-void ehci_wait_controllers(void);
 struct usbdevice_s;
 struct usb_endpoint_descriptor;
 struct usb_pipe;

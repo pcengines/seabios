@@ -10,19 +10,31 @@ enum tpmDurationType {
     TPM_DURATION_TYPE_LONG,
 };
 
-typedef u8 TPMVersion;
+/* low level driver implementation */
+struct tpm_driver {
+    u32 *timeouts;
+    u32 *durations;
+    void (*set_timeouts)(u32 timeouts[4], u32 durations[3]);
+    u32 (*probe)(void);
+    u32 (*init)(void);
+    u32 (*activate)(u8 locty);
+    u32 (*ready)(void);
+    u32 (*senddata)(const u8 *const data, u32 len);
+    u32 (*readresp)(u8 *buffer, u32 *len);
+    u32 (*waitdatavalid)(void);
+    u32 (*waitrespready)(enum tpmDurationType to_t);
+    /* the TPM will be used for buffers of sizes below the sha1threshold
+       for calculating the hash */
+    u32 sha1threshold;
+};
 
-#define TPM_VERSION_NONE 0
-#define TPM_VERSION_1_2  1
-#define TPM_VERSION_2    2
+extern struct tpm_driver tpm_drivers[];
 
-TPMVersion tpmhw_probe(void);
-int tpmhw_is_present(void);
-struct tpm_req_header;
-int tpmhw_transmit(u8 locty, struct tpm_req_header *req,
-                   void *respbuffer, u32 *respbufferlen,
-                   enum tpmDurationType to_t);
-void tpmhw_set_timeouts(u32 timeouts[4], u32 durations[3]);
+
+#define TIS_DRIVER_IDX       0
+#define TPM_NUM_DRIVERS      1
+
+#define TPM_INVALID_DRIVER  -1
 
 /* TIS driver */
 /* address of locality 0 (TIS) */
@@ -39,7 +51,6 @@ void tpmhw_set_timeouts(u32 timeouts[4], u32 durations[3]);
 #define TIS_REG_INTF_CAPABILITY        0x14
 #define TIS_REG_STS                    0x18
 #define TIS_REG_DATA_FIFO              0x24
-#define TIS_REG_IFACE_ID               0x30
 #define TIS_REG_DID_VID                0xf00
 #define TIS_REG_RID                    0xf04
 
@@ -58,21 +69,12 @@ void tpmhw_set_timeouts(u32 timeouts[4], u32 durations[3]);
 #define TIS_ACCESS_REQUEST_USE         (1 << 1) /* 0x02 */
 #define TIS_ACCESS_TPM_ESTABLISHMENT   (1 << 0) /* 0x01 */
 
-/*
- * Default TIS timeouts used before getting them from the TPM itself
- */
-#define TIS_DEFAULT_TIMEOUT_A           750000 /* us */
-#define TIS_DEFAULT_TIMEOUT_B          2000000 /* us */
-#define TIS_DEFAULT_TIMEOUT_C           750000 /* us */
-#define TIS_DEFAULT_TIMEOUT_D           750000 /* us */
+#define SCALER 10
 
-/*
- * Default TIS 2 timeouts given in TPM Profile (TPT) Spec
- */
-#define TIS2_DEFAULT_TIMEOUT_A          750000 /* us */
-#define TIS2_DEFAULT_TIMEOUT_B         2000000 /* us */
-#define TIS2_DEFAULT_TIMEOUT_C          200000 /* us */
-#define TIS2_DEFAULT_TIMEOUT_D           30000 /* us */
+#define TIS_DEFAULT_TIMEOUT_A          (750  * SCALER)
+#define TIS_DEFAULT_TIMEOUT_B          (2000 * SCALER)
+#define TIS_DEFAULT_TIMEOUT_C          (750  * SCALER)
+#define TIS_DEFAULT_TIMEOUT_D          (750  * SCALER)
 
 enum tisTimeoutType {
     TIS_TIMEOUT_TYPE_A = 0,
@@ -81,21 +83,8 @@ enum tisTimeoutType {
     TIS_TIMEOUT_TYPE_D,
 };
 
-/*
- * Default command durations used before getting them from the
- * TPM itself
- */
-#define TPM_DEFAULT_DURATION_SHORT      2000000 /* us */
-#define TPM_DEFAULT_DURATION_MEDIUM    20000000 /* us */
-#define TPM_DEFAULT_DURATION_LONG      60000000 /* us */
-
-/*
- * TPM 2 command durations; we set them to the timeout values
- * given in TPM Profile (PTP) Specification; exceeding those
- * timeout values indicates a faulty TPM.
- */
-#define TPM2_DEFAULT_DURATION_SHORT       750000 /* us */
-#define TPM2_DEFAULT_DURATION_MEDIUM     2000000 /* us */
-#define TPM2_DEFAULT_DURATION_LONG       2000000 /* us */
+#define TPM_DEFAULT_DURATION_SHORT     (2000  * SCALER)
+#define TPM_DEFAULT_DURATION_MEDIUM    (20000 * SCALER)
+#define TPM_DEFAULT_DURATION_LONG      (60000 * SCALER)
 
 #endif /* TPM_DRIVERS_H */

@@ -13,7 +13,7 @@
 #include "config.h" // CONFIG_*
 #include "malloc.h" // free
 #include "output.h" // dprintf
-#include "pcidevice.h" // foreachpci
+#include "pci.h" // foreachpci
 #include "pci_ids.h" // PCI_DEVICE_ID_VIRTIO_BLK
 #include "pci_regs.h" // PCI_VENDOR_ID
 #include "std/disk.h" // DISK_RET_SUCCESS
@@ -134,7 +134,9 @@ virtio_scsi_scan_target(struct pci_device *pci, struct vp_device *vp,
 static void
 init_virtio_scsi(struct pci_device *pci)
 {
-    dprintf(1, "found virtio-scsi at %pP\n", pci);
+    u16 bdf = pci->bdf;
+    dprintf(1, "found virtio-scsi at %x:%x\n", pci_bdf_to_bus(bdf),
+            pci_bdf_to_dev(bdf));
     struct vring_virtqueue *vq = NULL;
     struct vp_device *vp = malloc_high(sizeof(*vp));
     if (!vp) {
@@ -148,7 +150,8 @@ init_virtio_scsi(struct pci_device *pci)
         u64 features = vp_get_features(vp);
         u64 version1 = 1ull << VIRTIO_F_VERSION_1;
         if (!(features & version1)) {
-            dprintf(1, "modern device without virtio_1 feature bit: %pP\n", pci);
+            dprintf(1, "modern device without virtio_1 feature bit: %x:%x\n",
+                    pci_bdf_to_bus(bdf), pci_bdf_to_dev(bdf));
             goto fail;
         }
 
@@ -156,13 +159,15 @@ init_virtio_scsi(struct pci_device *pci)
         status |= VIRTIO_CONFIG_S_FEATURES_OK;
         vp_set_status(vp, status);
         if (!(vp_get_status(vp) & VIRTIO_CONFIG_S_FEATURES_OK)) {
-            dprintf(1, "device didn't accept features: %pP\n", pci);
+            dprintf(1, "device didn't accept features: %x:%x\n",
+                    pci_bdf_to_bus(bdf), pci_bdf_to_dev(bdf));
             goto fail;
         }
     }
 
     if (vp_find_vq(vp, 2, &vq) < 0 ) {
-        dprintf(1, "fail to find vq for virtio-scsi %pP\n", pci);
+        dprintf(1, "fail to find vq for virtio-scsi %x:%x\n",
+                pci_bdf_to_bus(bdf), pci_bdf_to_dev(bdf));
         goto fail;
     }
 

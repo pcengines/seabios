@@ -36,7 +36,6 @@ int bootprio_find_pci_rom(struct pci_device *pci, int instance);
 int bootprio_find_named_rom(const char *name, int instance);
 struct usbdevice_s;
 int bootprio_find_usb(struct usbdevice_s *usbdev, int lun);
-int get_keystroke(int msec);
 
 // bootsplash.c
 void enable_vga_console(void);
@@ -110,8 +109,6 @@ void mtrr_setup(void);
 void multiboot_init(void);
 
 // fw/pciinit.c
-extern u64 pcimem_start, pcimem_end;
-extern u64 pcimem64_start, pcimem64_end;
 extern const u8 pci_irqs[4];
 void pci_setup(void);
 void pci_resume(void);
@@ -184,9 +181,9 @@ int jpeg_show(struct jpeg_decdata *jpeg, unsigned char *pic, int width
 void kbd_init(void);
 void handle_15c2(struct bregs *regs);
 void process_key(u8 key);
+u8 kbc_enqueue_key(u8 scan_code, u8 ascii_code);
 
 // misc.c
-extern int HaveRunPost;
 extern struct bios_config_table_s BIOS_CONFIG_TABLE __aligned(1);
 extern struct floppy_dbt_s diskette_param_table __aligned(1);
 extern u8 BiosChecksum;
@@ -225,11 +222,16 @@ void device_hardware_setup(void);
 void prepareboot(void);
 void startBoot(void);
 void reloc_preinit(void *f, void *arg);
-void code_mutable_preinit(void);
+
+// resume.c
+extern int HaveRunPost;
 
 // serial.c
 void serial_setup(void);
 void lpt_setup(void);
+
+// serialconsole.c
+void uart_keyboard_handler(void);
 
 // vgahooks.c
 void handle_155f(struct bregs *regs);

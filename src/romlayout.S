@@ -548,10 +548,7 @@ entry_post:
         ENTRY_INTO32 _cfunc32flat_handle_post   // Normal entry point
 
         ORG 0xe2c3
-        .global entry_02
-entry_02:
-        ENTRY handle_02  // NMI handler does not switch onto extra stack
-        iretw
+        IRQ_ENTRY 02
 
         ORG 0xe3fe
         .global entry_13_official

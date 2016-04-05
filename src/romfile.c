@@ -1,6 +1,7 @@
 // Access to pseudo "file" interface for configuration information.
 //
 // Copyright (C) 2012  Kevin O'Connor <kevin@koconnor.net>
+// Copyright (C) 2015  Eltan B.V.
 //
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
@@ -9,6 +10,7 @@
 #include "output.h" // dprintf
 #include "romfile.h" // struct romfile_s
 #include "string.h" // memcmp
+#include "fw/coreboot.h" // cbfs_romfile overrides
 
 static struct romfile_s *RomfileRoot VARVERIFY32INIT;
 
@@ -28,8 +30,13 @@ __romfile_findprefix(const char *prefix, int prefixlen, struct romfile_s *prev)
     if (prev)
         cur = prev->next;
     while (cur) {
-        if (memcmp(prefix, cur->name, prefixlen) == 0)
-            return cur;
+        if (memcmp(prefix, cur->name, prefixlen) == 0) {
+
+        	int dont_hide;
+        	char *data = get_cbmem_file( (char *) cur->name, &dont_hide );	// Check if we should hide this
+        	if (!data) 		return cur;	// no override for this file
+        	if (dont_hide) 	return cur;	// We know it and shouldn't hide
+        }
         cur = cur->next;
     }
     return NULL;
@@ -52,6 +59,18 @@ romfile_find(const char *name)
 void *
 romfile_loadfile(const char *name, int *psize)
 {
+    char *data = get_cbmem_file( (char *) name, psize );			// First try to read a file override from cbmem
+
+    if ( data ) {
+
+        if ( !*psize ) {
+
+            dprintf(3, "Hiding romfile '%s'\n", name);
+        	return NULL;						// Hide the file
+        }
+    	return data;
+    }
+
     struct romfile_s *file = romfile_find(name);
     if (!file)
         return NULL;
@@ -60,7 +79,7 @@ romfile_loadfile(const char *name, int *psize)
     if (!filesize)
         return NULL;
 
-    char *data = malloc_tmphigh(filesize+1);
+    data = malloc_tmphigh(filesize+1);
     if (!data) {
         warn_noalloc();
         return NULL;
@@ -83,6 +102,28 @@ romfile_loadfile(const char *name, int *psize)
 u64
 romfile_loadint(const char *name, u64 defval)
 {
+    int  size;
+	char *data = get_cbmem_file( (char *) name, &size );			// First try to read a file override from cbmem
+
+    if ( data ) {
+
+        u64 val = 0;
+
+        switch (size){
+
+        	case 1:
+        	case 2:
+        	case 4:
+        	case 8:
+                memcpy(&val, data, size);
+        		break;
+
+        	default:
+                return defval;
+        }
+    	return val;
+    }
+
     struct romfile_s *file = romfile_find(name);
     if (!file)
         return defval;
