@@ -168,7 +168,7 @@ scsi_is_ready(struct disk_op_s *op)
 
         if (sense.asc == 0x04 && sense.ascq == 0x01 && !in_progress) {
             /* IN PROGRESS OF BECOMING READY */
-            printf("Waiting for device to detect medium... ");
+            dprintf(1, "Waiting for device to detect medium... ");
             /* Allow 30 seconds more */
             end = timer_calc(30000);
             in_progress = 1;
@@ -232,7 +232,7 @@ scsi_drive_setup(struct drive_s *drive, const char *s, int prio)
         return -1;
     }
     drive->sectors = (u64)be32_to_cpu(capdata.sectors) + 1;
-    dprintf(1, "%s blksize=%d sectors=%d\n"
+    dprintf(1, "%s blksize=%d sectors=%u\n"
             , s, drive->blksize, (unsigned)drive->sectors);
 
     // We do not recover from USB stalls, so try to be safe and avoid
