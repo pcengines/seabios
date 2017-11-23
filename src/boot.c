@@ -761,13 +761,8 @@ interactive_bootmenu(void)
     if (!show_boot_menu)
         return;
 
-    // skip menu if only one boot device and no TPM
-    if (show_boot_menu == 2 && !tpm_can_show_menu()
-        && !hlist_empty(&BootList) && !BootList.first->next) {
-        dprintf(1, "Only one boot device present. Skip boot menu.\n");
-        printf("\n");
-        return;
-    }
+    int n_key = 0;
+    int pxen = find_pxen();
 
     while (get_keystroke(0) >= 0)
         ;
@@ -793,10 +788,9 @@ interactive_bootmenu(void)
     while (get_keystroke(0) >= 0)
         ;
 
-    // choice = 1 - boot 1st device from list by default
-    int maxmenu = 0, choice = 1;
+    int maxmenu = 0;
     char find_iPXE[5];
-    struct bootentry_s *pos;
+    struct bootentry_s *pos, *boot = NULL;	
 
     // If N key is pressed, do not print boot menu
     // and boot directly from iPXE
@@ -805,58 +799,74 @@ interactive_bootmenu(void)
             maxmenu++;
             strtcpy(find_iPXE, pos->description, 5);
             if (strcmp(find_iPXE, "iPXE") == 0)
-                choice = maxmenu;
+                boot = pos;
+            if (maxmenu >= ARRAY_SIZE(menuchars)) {
+                break;
+            }
         }
     }
     // Show menu items if menu-key is pressed
     else {
-        menu_key_pressed = 1;
         printf("Select boot device:\n\n");
         wait_threads();
 
         // Show menu items
         hlist_for_each_entry(pos, &BootList, node) {
             char desc[77];
+            if (maxmenu >= ARRAY_SIZE(menuchars)) {
+                break;
+            }
+            printf("%c. %s\n", menuchars[maxmenu]
+                , strtcpy(desc, pos->description, ARRAY_SIZE(desc)));
             maxmenu++;
-            printf("%d. %s\n", maxmenu
-                   , strtcpy(desc, pos->description, ARRAY_SIZE(desc)));
         }
         if (tpm_can_show_menu()) {
             printf("\nt. TPM Configuration\n");
         }
-
         // Get key press.  If the menu key is ESC, do not restart boot unless
         // 1.5 seconds have passed.  Otherwise users (trained by years of
         // repeatedly hitting keys to enter the BIOS) will end up hitting ESC
         // multiple times and immediately booting the primary boot device.
+
         int esc_accepted_time = irqtimer_calc(menukey == 1 ? 1500 : 0);
         for (;;) {
-            scan_code = get_keystroke(1000);
-            if (scan_code == 1 && !irqtimer_check(esc_accepted_time))
+            int keystroke = get_keystroke_full(1000);
+            if (keystroke == 0x011b && !irqtimer_check(esc_accepted_time))
                 continue;
-            if (tpm_can_show_menu() && scan_code == 20 /* t */) {
+            if (keystroke < 0) // timeout
+                continue;
+
+            scan_code = keystroke >> 8;
+            int key_ascii = keystroke & 0xff;
+            if (tpm_can_show_menu() && key_ascii == 't') {
                 printf("\n");
                 tpm_menu();
             }
-            if (scan_code >= 1 && scan_code <= maxmenu+1)
+            if (scan_code == 1) {
+                // ESC
+                printf("\n");
+                return;
+            }
+
+            maxmenu = 0;
+            hlist_for_each_entry(pos, &BootList, node) {
+                if (maxmenu >= ARRAY_SIZE(menuchars))
+                    break;
+                if (key_ascii == menuchars[maxmenu]) {
+                    boot = pos;
+                    break;
+                }
+                maxmenu++;
+            }
+            if (boot)
                 break;
         }
         printf("\n");
-        if (scan_code == 0x01)
-            // ESC
-            return;
-
-        choice = scan_code - 1;
     }
-
-    // Find entry and make top priority.
-    hlist_for_each_entry(pos, &BootList, node) {
-        if (! --choice)
-            break;
-    }
-    hlist_del(&pos->node);
-    pos->priority = 0;
-    hlist_add_head(&pos->node, &BootList);
+    // Find entry and make top priority.	
+    hlist_del(&boot->node);	
+    boot->priority = 0;	
+    hlist_add_head(&boot->node, &BootList);
 }
 
 // BEV (Boot Execution Vector) list
