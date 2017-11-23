@@ -78,7 +78,7 @@ struct usbhub_op_s {
  ****************************************************************/
 
 // USB mandated timings (in ms)
-#define USB_TIME_SIGATT 100
+#define USB_TIME_SIGATT 500 // 100		// WIV changed to 500 to make ADATA CIO3 stick working ( 200 is sufficient for SanDisk Ultra USB 3.0)
 #define USB_TIME_ATTDB  100
 #define USB_TIME_DRST   10
 #define USB_TIME_DRSTR  50

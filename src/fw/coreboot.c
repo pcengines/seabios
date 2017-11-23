@@ -17,6 +17,7 @@
 #include "stacks.h" // yield
 #include "string.h" // memset
 #include "util.h" // coreboot_preinit
+#include "coreboot.h" // cbfs_romfile overrides
 
 
 /****************************************************************
@@ -33,6 +34,13 @@ struct cb_header {
 };
 
 #define CB_SIGNATURE 0x4f49424C // "LBIO"
+
+// Generic cb record
+//
+struct cb_record {
+    u32 tag;
+    u32 size;
+};
 
 struct cb_memory_range {
     u64 start;
@@ -161,6 +169,45 @@ find_cb_table(void)
 
 static struct cb_memory *CBMemTable;
 const char *CBvendor = "", *CBpart = "";
+
+char *
+get_cbmem_file(char * filename, int * size)
+{
+    char *f = NULL;
+    struct cbfile_record *cbf = NULL;
+    struct file_container *cbmem_file_ptr =NULL;
+    unsigned long temp;
+
+    dprintf(3, "looking for file \"%s\" in cbmem\n", filename);
+
+    if ( size ) *size = 0;
+
+    // First we need to find the coreboot table
+    struct cb_header *cbh = find_cb_table();
+
+    if (cbh) {
+        // Now find the file entry
+        cbf = find_cb_subtable(cbh, CB_TAG_FILE);
+    }
+
+    cbmem_file_ptr = (struct file_container *) (u32) cbf->forward;
+
+    // If we found the FILE table we now need to walk through each entry.
+    while (cbmem_file_ptr->file_signature == CBMEM_ID_FILE) {
+
+        if (!strcmp( cbmem_file_ptr->file_name, filename ) ) {
+
+            f = (char *)cbmem_file_ptr->file_data;
+            if ( size ) *size = cbmem_file_ptr->file_size;
+            break;
+        }
+        dprintf(3, "found file \"%s\" in cbmem\n", cbmem_file_ptr->file_name);
+        temp = (u32) cbmem_file_ptr + sizeof(struct file_container) + cbmem_file_ptr->file_size;
+        temp = ALIGN(temp, 16);
+        cbmem_file_ptr = (struct file_container *) temp;
+    }
+    return f;
+}
 
 // Populate max ram and e820 map info by scanning for a coreboot table.
 void

@@ -95,6 +95,10 @@ struct sdhci_s {
 #define ST_READ       (1<<4)
 #define ST_MULTIPLE   (1<<5)
 
+// SDHCI SDHC_CTRL1 Flags
+#define CTRL1_HIGH_SPEED_EN (1<<2)
+#define CTRL1_DAT_TX_WIDTH (1<<1)	// 4 BIT IF SET 0 BIT IF CLEAR (DEFAULT)
+
 // SDHCI capabilities flags
 #define SD_CAPLO_V33             (1<<24)
 #define SD_CAPLO_V30             (1<<25)
@@ -458,13 +462,19 @@ sdcard_card_setup(struct sddrive_s *drive, int volt, int prio)
     if (ret)
         return ret;
     // Set controller to data transfer clock rate
-    ret = sdcard_set_frequency(regs, 25000);
+    ret = sdcard_set_frequency(regs, 200000);
     if (ret)
         return ret;
     // Register drive
     ret = sdcard_get_capacity(drive, csd);
     if (ret)
         return ret;
+
+    u32 ctrl1 = readl(&regs->host_control);
+    ctrl1 |= CTRL1_HIGH_SPEED_EN;
+    writel(&regs->host_control, ctrl1);
+    dprintf(3, "host_control contains 0x%08x\n", ctrl1);
+
     char pnm[7] = {};
     int i;
     for (i=0; i < (drive->card_type & SF_MMC ? 6 : 5); i++)

@@ -136,9 +136,19 @@ init_optionrom(struct rom_header *rom, u16 bdf, int isvga)
 
     tpm_option_rom(newrom, rom->size * 512);
 
+    //TODO: Find a way to hide initialisation string of iPXE
+    // It is called everytime and I have no idea how it was hidden before.
+    // For now it can be commented out and seems to work good.
+
+    /*
     if (isvga || get_pnp_rom(newrom))
         // Only init vga and PnP roms here.
         callrom(newrom, bdf);
+    */
+
+    if (isvga)
+	// Only init vga roms here.
+	callrom(newrom, bdf);
 
     return rom_confirm(newrom->size * 512);
 }
@@ -188,15 +198,18 @@ deploy_romfile(struct romfile_s *file)
 static void
 run_file_roms(const char *prefix, int isvga, u64 *sources)
 {
+    int pxen = find_pxen();
     struct romfile_s *file = NULL;
     for (;;) {
         file = romfile_findprefix(prefix, file);
         if (!file)
             break;
-        struct rom_header *rom = deploy_romfile(file);
-        if (rom) {
-            setRomSource(sources, rom, (u32)file);
-            init_optionrom(rom, 0, isvga);
+        if ((strcmp(file->name, "genroms/pxe.rom") == 0) && (pxen == 1)) {
+            struct rom_header *rom = deploy_romfile(file);
+            if (rom) {
+                setRomSource(sources, rom, (u32)file);
+                init_optionrom(rom, 0, isvga);
+            }
         }
     }
 }

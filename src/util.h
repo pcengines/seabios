@@ -37,6 +37,7 @@ int bootprio_find_named_rom(const char *name, int instance);
 struct usbdevice_s;
 int bootprio_find_usb(struct usbdevice_s *usbdev, int lun);
 int get_keystroke(int msec);
+int find_pxen(void);
 
 // bootsplash.c
 void enable_vga_console(void);
