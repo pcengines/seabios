@@ -5,7 +5,7 @@ Fourth digit in release number means PC Engines patch.
 
 ## [Unreleased]
 
-## [rel-1.11.0.1] - 2017-11-24
+## [rel-1.11.0.1] - 2017-11-30
 ### Changed
 - rebased to 1.11.0 stable mainline
 - removed SgaBIOS option rom enable/disable sortbootorder config handling
