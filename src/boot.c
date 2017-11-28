@@ -512,7 +512,7 @@ interactive_bootmenu(void)
     char *bootmsg = romfile_loadfile("etc/boot-menu-message", NULL);
     int menukey = romfile_loadint("etc/boot-menu-key", 1);
 
-    printf("%s", bootmsg && pxen == 1 ? bootmsg : "\nPress F10 key now for boot menu\n\n");
+    printf("\n%s", bootmsg && pxen == 1 ? bootmsg : "Press F10 key now for boot menu\n\n");
     free(bootmsg);
 
     u32 menutime = romfile_loadint("etc/boot-menu-wait", DEFAULT_BOOTMENU_WAIT);
