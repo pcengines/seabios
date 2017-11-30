@@ -354,6 +354,9 @@ xhci_hub_reset(struct usbhub_s *hub, u32 port)
         // A USB2 port - perform device reset
         xhci_print_port_state(3, __func__, port, portsc);
         writel(&xhci->pr[port].portsc, portsc | XHCI_PORTSC_PR);
+        if (wait_bit(&xhci->pr[port].portsc, XHCI_PORTSC_PED, XHCI_PORTSC_PED, 100) != 0)
+            return -1;
+        msleep(20); // Patch to make XHCI work on AMD Mullins
         break;
     default:
         return -1;

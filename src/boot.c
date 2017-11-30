@@ -103,6 +103,33 @@ find_prio(const char *glob)
     return -1;
 }
 
+// search for 'ipxe enable' bit value
+int find_pxen(void)
+{
+    int i = 0;
+    for (i=0; i < BootorderCount; i++)
+    {
+        if (glob_prefix("pxen0", Bootorder[i]))
+            return 0;
+        if (glob_prefix("pxen1", Bootorder[i]))
+            return 1;
+    }
+    return -1;
+}
+
+// search for 'boot from usb' bit value
+// if it doesn't exist - set to enabled
+static int find_usben(void)
+{
+     int i;
+     for (i=0; i < BootorderCount; i++)
+     {
+         if (glob_prefix("usben0", Bootorder[i]))
+             return 0;
+     }
+     return 1;
+}
+
 #define FW_PCI_DOMAIN "/pci@i0cf8"
 
 static char *
@@ -388,8 +415,10 @@ boot_add_floppy(struct drive_s *drive, const char *desc, int prio)
 void
 boot_add_hd(struct drive_s *drive, const char *desc, int prio)
 {
-    bootentry_add(IPL_TYPE_HARDDISK, defPrio(prio, DefaultHDPrio)
-                  , (u32)drive, desc);
+    int usben = find_usben();
+    if ((glob_prefix("USB*", desc) == NULL) || usben == 1)
+        bootentry_add(IPL_TYPE_HARDDISK, defPrio(prio, DefaultHDPrio)
+                      , (u32)drive, desc);
 }
 
 void
@@ -461,6 +490,9 @@ interactive_bootmenu(void)
 {
     // XXX - show available drives?
 
+    int n_key = 0;
+    int pxen = find_pxen();
+
     if (! CONFIG_BOOTMENU || !romfile_loadint("etc/show-boot-menu", 1))
         return;
 
@@ -469,58 +501,81 @@ interactive_bootmenu(void)
 
     char *bootmsg = romfile_loadfile("etc/boot-menu-message", NULL);
     int menukey = romfile_loadint("etc/boot-menu-key", 1);
-    printf("%s", bootmsg ?: "\nPress ESC for boot menu.\n\n");
+
+    printf("\n%s", bootmsg && pxen == 1 ? bootmsg : "Press F10 key now for boot menu\n\n");
     free(bootmsg);
 
     u32 menutime = romfile_loadint("etc/boot-menu-wait", DEFAULT_BOOTMENU_WAIT);
     enable_bootsplash();
     int scan_code = get_keystroke(menutime);
     disable_bootsplash();
-    if (scan_code != menukey)
+
+    // 0x31 for N or n key
+    if (scan_code == 0x31 && pxen == 1)
+        n_key = 1;
+
+    if (scan_code != menukey && n_key != 1)
         return;
 
     while (get_keystroke(0) >= 0)
         ;
 
-    printf("Select boot device:\n\n");
-    wait_threads();
-
-    // Show menu items
-    int maxmenu = 0;
+    // choice = 1 - boot 1st device from list by default
+    int maxmenu = 0, choice = 1;
+    char find_iPXE[5];
     struct bootentry_s *pos;
-    hlist_for_each_entry(pos, &BootList, node) {
-        char desc[77];
-        maxmenu++;
-        printf("%d. %s\n", maxmenu
-               , strtcpy(desc, pos->description, ARRAY_SIZE(desc)));
-    }
-    if (tpm_can_show_menu()) {
-        printf("\nt. TPM Configuration\n");
-    }
 
-    // Get key press.  If the menu key is ESC, do not restart boot unless
-    // 1.5 seconds have passed.  Otherwise users (trained by years of
-    // repeatedly hitting keys to enter the BIOS) will end up hitting ESC
-    // multiple times and immediately booting the primary boot device.
-    int esc_accepted_time = irqtimer_calc(menukey == 1 ? 1500 : 0);
-    for (;;) {
-        scan_code = get_keystroke(1000);
-        if (scan_code == 1 && !irqtimer_check(esc_accepted_time))
-            continue;
-        if (tpm_can_show_menu() && scan_code == 20 /* t */) {
-            printf("\n");
-            tpm_menu();
+    // If N key is pressed, do not print boot menu
+    // and boot directly from iPXE
+    if (n_key) {
+        hlist_for_each_entry(pos, &BootList, node) {
+            maxmenu++;
+            strtcpy(find_iPXE, pos->description, 5);
+            if (strcmp(find_iPXE, "iPXE") == 0)
+                choice = maxmenu;
         }
-        if (scan_code >= 1 && scan_code <= maxmenu+1)
-            break;
     }
-    printf("\n");
-    if (scan_code == 0x01)
-        // ESC
-        return;
+    // Show menu items if menu-key is pressed
+    else {
+        printf("Select boot device:\n\n");
+        wait_threads();
+
+        // Show menu items
+        hlist_for_each_entry(pos, &BootList, node) {
+            char desc[77];
+            maxmenu++;
+            printf("%d. %s\n", maxmenu
+                   , strtcpy(desc, pos->description, ARRAY_SIZE(desc)));
+        }
+        if (tpm_can_show_menu()) {
+            printf("\nt. TPM Configuration\n");
+        }
+
+        // Get key press.  If the menu key is ESC, do not restart boot unless
+        // 1.5 seconds have passed.  Otherwise users (trained by years of
+        // repeatedly hitting keys to enter the BIOS) will end up hitting ESC
+        // multiple times and immediately booting the primary boot device.
+        int esc_accepted_time = irqtimer_calc(menukey == 1 ? 1500 : 0);
+        for (;;) {
+            scan_code = get_keystroke(1000);
+            if (scan_code == 1 && !irqtimer_check(esc_accepted_time))
+                continue;
+            if (tpm_can_show_menu() && scan_code == 20 /* t */) {
+                printf("\n");
+                tpm_menu();
+            }
+            if (scan_code >= 1 && scan_code <= maxmenu+1)
+                break;
+        }
+        printf("\n");
+        if (scan_code == 0x01)
+            // ESC
+            return;
+
+        choice = scan_code - 1;
+    }
 
     // Find entry and make top priority.
-    int choice = scan_code - 1;
     hlist_for_each_entry(pos, &BootList, node) {
         if (! --choice)
             break;
