@@ -137,14 +137,7 @@ init_optionrom(struct rom_header *rom, u16 bdf, int isvga)
     tpm_option_rom(newrom, rom->size * 512);
 
     //TODO: Find a way to hide initialisation string of iPXE
-    // It is called everytime and I have no idea how it was hidden before.
-    // For now it can be commented out and seems to work good.
-
-    /*
-    if (isvga || get_pnp_rom(newrom))
-        // Only init vga and PnP roms here.
-        callrom(newrom, bdf);
-    */
+    //which was printed by calling callrom function 
 
     if (isvga)
 	// Only init vga roms here.
