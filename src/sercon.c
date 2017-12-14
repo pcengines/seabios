@@ -99,6 +99,12 @@ static void sercon_putchar(u8 chr)
     }
 }
 
+static void sercon_term_reset(void)
+{
+    sercon_putchar('\x1b');
+    sercon_putchar('c');
+}
+
 static void sercon_term_clear_screen(void)
 {
     sercon_putchar('\x1b');
@@ -302,7 +308,7 @@ static void sercon_lazy_putchar(u8 chr, u8 attr, u8 teletype)
 /* Set video mode */
 static void sercon_1000(struct bregs *regs)
 {
-
+    u8 clearscreen = !(regs->al & 0x80);
     u8 mode = regs->al & 0x7f;
     u8 rows, cols;
 
@@ -326,7 +332,7 @@ static void sercon_1000(struct bregs *regs)
             regs->al = 0x30;
             break;
         }
-
+        cursor_pos_set(0, 0);
         SET_BDA(video_mode, mode);
         SET_BDA(video_cols, cols);
         SET_BDA(video_rows, rows-1);
@@ -336,8 +342,15 @@ static void sercon_1000(struct bregs *regs)
     }
 
     SET_LOW(sercon_enable, mode <= 0x07);
+    SET_LOW(sercon_col_last, 0);
+    SET_LOW(sercon_row_last, 0);
+    SET_LOW(sercon_attr_last, 0);
 
+    sercon_term_reset();
     sercon_term_no_linewrap();
+
+    if (clearscreen)
+         sercon_term_clear_screen();
 }
 
 /* Set text-mode cursor shape */
