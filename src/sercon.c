@@ -99,6 +99,7 @@ static void sercon_putchar(u8 chr)
     }
 }
 
+/* Reset terminal to initial state */
 static void sercon_term_reset(void)
 {
     sercon_putchar('\x1b');
@@ -349,8 +350,9 @@ static void sercon_1000(struct bregs *regs)
     sercon_term_reset();
     sercon_term_no_linewrap();
 
-    if (clearscreen)
+    if (clearscreen) {
          sercon_term_clear_screen();
+    }
 }
 
 /* Set text-mode cursor shape */
