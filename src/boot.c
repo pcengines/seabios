@@ -544,7 +544,7 @@ boot_init(void)
 
     BootRetryTime = romfile_loadint("etc/boot-fail-wait", 60*1000);
 
-    loadBootOrder();
+    loadBootorder();
     loadBiosGeometry();
 }
 
