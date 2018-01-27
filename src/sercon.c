@@ -45,6 +45,7 @@ static void cursor_pos_set(u8 row, u8 col)
 
 static char **BootOrder VARVERIFY32INIT;
 static int BootOrderCount;
+static int scon;
 
 static void
 loadBootOrder(void)
@@ -604,12 +605,7 @@ void sercon_setup(void)
 
     loadBootOrder();
 
-    int scon = find_scon();
-
-    if(!scon) {
-        SET_LOW(sercon_enable, 0);
-        return;
-    }
+    scon = find_scon();
 
     dprintf(1, "sercon: using ioport 0x%x\n", addr);
 
@@ -631,9 +627,13 @@ void sercon_setup(void)
     }
 
     SET_IVT(0x10, FUNC16(entry_sercon));
-    SET_LOW(sercon_port, addr);
-    outb(0x03, addr + SEROFF_LCR); // 8N1
-    outb(0x01, addr + 0x02);       // enable fifo
+    if(!scon) {
+        SET_LOW(sercon_enable, 0);
+    } else {
+        SET_LOW(sercon_port, addr);
+        outb(0x03, addr + SEROFF_LCR); // 8N1
+        outb(0x01, addr + 0x02);       // enable fifo
+    }
 }
 
 /****************************************************************
