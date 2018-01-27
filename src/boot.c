@@ -31,7 +31,7 @@ static char **Bootorder VARVERIFY32INIT;
 static int BootorderCount;
 
 static void
-loadBootOrder(void)
+loadBootorder(void)
 {
     if (!CONFIG_BOOTORDER)
         return;
@@ -314,7 +314,7 @@ boot_init(void)
 
     BootRetryTime = romfile_loadint("etc/boot-fail-wait", 60*1000);
 
-    loadBootOrder();
+    loadBootorder();
 }
 
 

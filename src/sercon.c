@@ -12,6 +12,7 @@
 #include "string.h" // memcpy
 #include "romfile.h" // romfile_loadint
 #include "hw/serialio.h" // SEROFF_IER
+#include "malloc.h"
 #include "cp437.h"
 
 static u8 video_rows(void)
@@ -42,11 +43,52 @@ static void cursor_pos_set(u8 row, u8 col)
     SET_BDA(cursor_pos[0], pos);
 }
 
-static char **Bootorder VARVERIFY32INIT;
-static int BootorderCount;
+static char **BootOrder VARVERIFY32INIT;
+static int BootOrderCount;
 
+static void
+loadBootOrder(void)
+{
+    if (!CONFIG_BOOTORDER)
+        return;
+
+    char *f = romfile_loadfile("bootorder", NULL);
+    if (!f)
+        return;
+
+    int i = 0;
+    BootOrderCount = 1;
+    while (f[i]) {
+        if (f[i] == '\n')
+            BootOrderCount++;
+        i++;
+    }
+    BootOrder = malloc_tmphigh(BootOrderCount*sizeof(char*));
+    if (!BootOrder) {
+        warn_noalloc();
+        free(f);
+        BootOrderCount = 0;
+        return;
+    }
+
+    dprintf(1, "boot order:\n");
+    i = 0;
+    do {
+        BootOrder[i] = f;
+        f = strchr(f, '\n');
+        if (f)
+            *(f++) = '\0';
+        BootOrder[i] = nullTrailingSpace(BootOrder[i]);
+        dprintf(1, "%d: %s\n", i+1, BootOrder[i]);
+        i++;
+    } while (f);
+}
+
+// See if 'str' starts with 'glob' - if glob contains an '*' character
+// it will match any number of characters in str that aren't a '/' or
+// the next glob character.
 static char *
-glob_prefix(const char *glob, const char *str)
+find_glob_prefix(const char *glob, const char *str)
 {
     for (;;) {
         if (!*glob && (!*str || *str == '/'))
@@ -65,55 +107,18 @@ glob_prefix(const char *glob, const char *str)
     }
 }
 
+
 static int find_scon(void)
 {
     int i = 0;
-    for (i=0; i < BootorderCount; i++)
+    for (i=0; i < BootOrderCount; i++)
     {
-        if (glob_prefix("scon0", Bootorder[i]))
+        if (find_glob_prefix("scon0", BootOrder[i]))
             return 0;
-        if (glob_prefix("scon1", Bootorder[i]))
+        if (find_glob_prefix("scon1", BootOrder[i]))
             return 1;
     }
     return -1;
-}
-
-static void
-loadBootOrder(void)
-{
-    if (!CONFIG_BOOTORDER)
-        return;
-
-    char *f = romfile_loadfile("bootorder", NULL);
-    if (!f)
-        return;
-
-    int i = 0;
-    BootorderCount = 1;
-    while (f[i]) {
-        if (f[i] == '\n')
-            BootorderCount++;
-        i++;
-    }
-    Bootorder = malloc_tmphigh(BootorderCount*sizeof(char*));
-    if (!Bootorder) {
-        warn_noalloc();
-        free(f);
-        BootorderCount = 0;
-        return;
-    }
-
-    dprintf(1, "boot order:\n");
-    i = 0;
-    do {
-        Bootorder[i] = f;
-        f = strchr(f, '\n');
-        if (f)
-            *(f++) = '\0';
-        Bootorder[i] = nullTrailingSpace(Bootorder[i]);
-        dprintf(1, "%d: %s\n", i+1, Bootorder[i]);
-        i++;
-    } while (f);
 }
 
 /****************************************************************
