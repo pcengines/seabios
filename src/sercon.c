@@ -42,6 +42,80 @@ static void cursor_pos_set(u8 row, u8 col)
     SET_BDA(cursor_pos[0], pos);
 }
 
+static char **Bootorder VARVERIFY32INIT;
+static int BootorderCount;
+
+static char *
+glob_prefix(const char *glob, const char *str)
+{
+    for (;;) {
+        if (!*glob && (!*str || *str == '/'))
+            return (char*)str;
+        if (*glob == '*') {
+            if (!*str || *str == '/' || *str == glob[1])
+                glob++;
+            else
+                str++;
+            continue;
+        }
+        if (*glob != *str)
+            return NULL;
+        glob++;
+        str++;
+    }
+}
+
+static int find_scon(void)
+{
+    int i = 0;
+    for (i=0; i < BootorderCount; i++)
+    {
+        if (glob_prefix("scon0", Bootorder[i]))
+            return 0;
+        if (glob_prefix("scon1", Bootorder[i]))
+            return 1;
+    }
+    return -1;
+}
+
+static void
+loadBootOrder(void)
+{
+    if (!CONFIG_BOOTORDER)
+        return;
+
+    char *f = romfile_loadfile("bootorder", NULL);
+    if (!f)
+        return;
+
+    int i = 0;
+    BootorderCount = 1;
+    while (f[i]) {
+        if (f[i] == '\n')
+            BootorderCount++;
+        i++;
+    }
+    Bootorder = malloc_tmphigh(BootorderCount*sizeof(char*));
+    if (!Bootorder) {
+        warn_noalloc();
+        free(f);
+        BootorderCount = 0;
+        return;
+    }
+
+    dprintf(1, "boot order:\n");
+    i = 0;
+    do {
+        Bootorder[i] = f;
+        f = strchr(f, '\n');
+        if (f)
+            *(f++) = '\0';
+        Bootorder[i] = nullTrailingSpace(Bootorder[i]);
+        dprintf(1, "%d: %s\n", i+1, Bootorder[i]);
+        i++;
+    } while (f);
+}
+
 /****************************************************************
  * serial console output
  ****************************************************************/
@@ -522,6 +596,16 @@ void sercon_setup(void)
     addr = romfile_loadint("etc/sercon-port", 0);
     if (!addr)
         return;
+
+    loadBootOrder();
+
+    int scon = find_scon();
+
+    if(!scon) {
+        SET_LOW(sercon_enable, 0);
+        return;
+    }
+
     dprintf(1, "sercon: using ioport 0x%x\n", addr);
 
     if (CONFIG_DEBUG_SERIAL)
