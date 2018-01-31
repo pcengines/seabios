@@ -5,6 +5,14 @@ Fourth digit in release number means PC Engines patch.
 
 ## [Unreleased]
 
+## [rel-1.11.0.3] - 2018-01-31
+### Fixed
+- timeout issues with USB 3.x
+
+### Added
+- support for serial console disabling runtime config
+- ATA UDMA enabled
+
 ## [rel-1.11.0.2] - 2017-12-22
 ### Fixed
 - bug with serial console printing
@@ -50,7 +58,8 @@ Fourth digit in release number means PC Engines patch.
 ### Fixed
 - prevented from printing character multiple times
 
-[Unreleased]: https://github.com/pcengines/seabios/compare/rel-1.11.0.2...apu_support
+[Unreleased]: https://github.com/pcengines/seabios/compare/rel-1.11.0.3...apu_support
+[rel-1.11.0.3]: https://github.com/pcengines/seabios/compare/rel-1.11.0.3...rel-1.11.0.2
 [rel-1.11.0.2]: https://github.com/pcengines/seabios/compare/rel-1.11.0.2...rel-1.11.0.1
 [rel-1.11.0.1]: https://github.com/pcengines/seabios/compare/rel-1.11.0.1...rel-1.10.2.1
 [rel-1.10.2.1]: https://github.com/pcengines/seabios/compare/rel-1.10.2.1...rel-1.10.0.1
