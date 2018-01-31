@@ -419,7 +419,7 @@ usb_hub_port_setup(void *data)
         if (ret < 0 || timer_check(hub->detectend))
             // No device found.
             goto done;
-        msleep(5);
+        msleep(20);
     }
 
     // XXX - wait USB_TIME_ATTDB time?
@@ -431,6 +431,8 @@ usb_hub_port_setup(void *data)
         // Reset failed
         goto resetfail;
     usbdev->speed = ret;
+
+    msleep(20);
 
     // Set address of port
     ret = usb_set_address(usbdev);

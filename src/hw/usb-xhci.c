@@ -312,7 +312,7 @@ static int wait_bit(u32 *reg, u32 mask, int value, u32 timeout)
  * Root hub
  ****************************************************************/
 
-#define XHCI_TIME_POSTPOWER 20
+#define XHCI_TIME_POSTPOWER 100
 
 // Check if device attached to port
 static void
@@ -354,16 +354,15 @@ xhci_hub_reset(struct usbhub_s *hub, u32 port)
         // A USB2 port - perform device reset
         xhci_print_port_state(3, __func__, port, portsc);
         writel(&xhci->pr[port].portsc, portsc | XHCI_PORTSC_PR);
-        if (wait_bit(&xhci->pr[port].portsc, XHCI_PORTSC_PED, XHCI_PORTSC_PED, 100) != 0)
+        if (wait_bit(&xhci->pr[port].portsc, XHCI_PORTSC_PED, XHCI_PORTSC_PED, 1500) != 0)
             return -1;
-        msleep(20); // Patch to make XHCI work on AMD Mullins
         break;
     default:
         return -1;
     }
 
     // Wait for device to complete reset and be enabled
-    u32 end = timer_calc(100);
+    u32 end = timer_calc(1500);
     for (;;) {
         portsc = readl(&xhci->pr[port].portsc);
         if (!(portsc & XHCI_PORTSC_CCS))
@@ -464,15 +463,15 @@ configure_xhci(void *data)
     if (reg & XHCI_CMD_RS) {
         reg &= ~XHCI_CMD_RS;
         writel(&xhci->op->usbcmd, reg);
-        if (wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 32) != 0)
+        if (wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 64) != 0)
             goto fail;
     }
 
     dprintf(3, "%s: resetting\n", __func__);
     writel(&xhci->op->usbcmd, XHCI_CMD_HCRST);
-    if (wait_bit(&xhci->op->usbcmd, XHCI_CMD_HCRST, 0, 100) != 0)
+    if (wait_bit(&xhci->op->usbcmd, XHCI_CMD_HCRST, 0, 500) != 0)
         goto fail;
-    if (wait_bit(&xhci->op->usbsts, XHCI_STS_CNR, 0, 100) != 0)
+    if (wait_bit(&xhci->op->usbsts, XHCI_STS_CNR, 0, 500) != 0)
         goto fail;
 
     writel(&xhci->op->config, xhci->slots);
@@ -527,7 +526,7 @@ configure_xhci(void *data)
     reg = readl(&xhci->op->usbcmd);
     reg &= ~XHCI_CMD_RS;
     writel(&xhci->op->usbcmd, reg);
-    wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 32);
+    wait_bit(&xhci->op->usbsts, XHCI_STS_HCH, XHCI_STS_HCH, 64);
 
 fail:
     free(xhci->eseg);
@@ -797,7 +796,7 @@ static int xhci_cmd_submit(struct usb_xhci_s *xhci, struct xhci_inctx *inctx
     mutex_lock(&xhci->cmds->lock);
     xhci_trb_queue(xhci->cmds, inctx, 0, flags);
     xhci_doorbell(xhci, 0, 0);
-    int rc = xhci_event_wait(xhci, xhci->cmds, 1000);
+    int rc = xhci_event_wait(xhci, xhci->cmds, 2000);
     mutex_unlock(&xhci->cmds->lock);
     return rc;
 }
