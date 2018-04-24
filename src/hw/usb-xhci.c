@@ -312,7 +312,7 @@ static int wait_bit(u32 *reg, u32 mask, int value, u32 timeout)
  * Root hub
  ****************************************************************/
 
-#define XHCI_TIME_POSTPOWER 100
+#define XHCI_TIME_POSTPOWER 250
 
 // Check if device attached to port
 static void
@@ -333,6 +333,7 @@ xhci_hub_detect(struct usbhub_s *hub, u32 port)
 {
     struct usb_xhci_s *xhci = container_of(hub->cntl, struct usb_xhci_s, usb);
     u32 portsc = readl(&xhci->pr[port].portsc);
+    xhci_print_port_state(3, __func__, port, portsc);
     return (portsc & XHCI_PORTSC_CCS) ? 1 : 0;
 }
 
@@ -342,35 +343,37 @@ xhci_hub_reset(struct usbhub_s *hub, u32 port)
 {
     struct usb_xhci_s *xhci = container_of(hub->cntl, struct usb_xhci_s, usb);
     u32 portsc = readl(&xhci->pr[port].portsc);
-    if (!(portsc & XHCI_PORTSC_CCS))
-        // Device no longer connected?!
+    if (!(portsc & XHCI_PORTSC_CCS)) {
+        dprintf(3, "XHCI: Device no longer connected!\n");
         return -1;
+    }
 
     switch (xhci_get_field(portsc, XHCI_PORTSC_PLS)) {
     case PLS_U0:
-        // A USB3 port - controller automatically performs reset
+        dprintf(3, "XHCI: USB3 port - controller automatically performs reset\n");
         break;
     case PLS_POLLING:
-        // A USB2 port - perform device reset
+        dprintf(3, "XHCI: USB2 port - performing device reset\n");
         xhci_print_port_state(3, __func__, port, portsc);
         writel(&xhci->pr[port].portsc, portsc | XHCI_PORTSC_PR);
-        if (wait_bit(&xhci->pr[port].portsc, XHCI_PORTSC_PED, XHCI_PORTSC_PED, 1500) != 0)
-            return -1;
         break;
     default:
         return -1;
     }
 
+    dprintf(3, "XHCI: Wait for device to complete reset and be enabled\n");
     // Wait for device to complete reset and be enabled
-    u32 end = timer_calc(1500);
+    u32 end = timer_calc(2000);
     for (;;) {
         portsc = readl(&xhci->pr[port].portsc);
-        if (!(portsc & XHCI_PORTSC_CCS))
-            // Device disconnected during reset
+        if (!(portsc & XHCI_PORTSC_CCS)) {
+            dprintf(3, "XHCI: Device disconnected during reset\n");
             return -1;
-        if (portsc & XHCI_PORTSC_PED)
-            // Reset complete
+        }
+        if (portsc & XHCI_PORTSC_PED) {
+            dprintf(3, "XHCI: Reset complete\n");
             break;
+        }
         if (timer_check(end)) {
             warn_timeout();
             return -1;
@@ -796,7 +799,7 @@ static int xhci_cmd_submit(struct usb_xhci_s *xhci, struct xhci_inctx *inctx
     mutex_lock(&xhci->cmds->lock);
     xhci_trb_queue(xhci->cmds, inctx, 0, flags);
     xhci_doorbell(xhci, 0, 0);
-    int rc = xhci_event_wait(xhci, xhci->cmds, 2000);
+    int rc = xhci_event_wait(xhci, xhci->cmds, 4000);
     mutex_unlock(&xhci->cmds->lock);
     return rc;
 }
@@ -894,9 +897,10 @@ static int xhci_config_hub(struct usbhub_s *hub)
     struct xhci_pipe *pipe = container_of(
         hub->usbdev->defpipe, struct xhci_pipe, pipe);
     struct xhci_slotctx *hdslot = (void*)xhci->devs[pipe->slotid].ptr_low;
-    if ((hdslot->ctx[3] >> 27) == 3)
-        // Already configured
+    if ((hdslot->ctx[3] >> 27) == 3) {
+        dprintf(3, "XHCI hub already configured\n");// Already configured
         return 0;
+    }
     struct xhci_inctx *in = xhci_alloc_inctx(hub->usbdev, 1);
     if (!in)
         return -1;
@@ -1015,6 +1019,7 @@ xhci_alloc_pipe(struct usbdevice_s *usbdev
         struct xhci_pipe *defpipe = container_of(
             usbdev->defpipe, struct xhci_pipe, pipe);
         pipe->slotid = defpipe->slotid;
+
         // Send configure command.
         int cc = xhci_cmd_configure_endpoint(xhci, pipe->slotid, in);
         if (cc != CC_SUCCESS) {
