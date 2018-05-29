@@ -78,7 +78,7 @@ struct usbhub_op_s {
  ****************************************************************/
 
 // USB mandated timings (in ms)
-#define USB_TIME_SIGATT 1000 // 100		// WIV changed to 1000 to give USB3.x sticks with stall response a chance to be detected
+#define USB_TIME_SIGATT 2500 // 100		// WIV changed to 2500 to give USB devices enough time to be detected and enumerated
 #define USB_TIME_ATTDB  100
 #define USB_TIME_DRST   10
 #define USB_TIME_DRSTR  50

@@ -312,7 +312,7 @@ static int wait_bit(u32 *reg, u32 mask, int value, u32 timeout)
  * Root hub
  ****************************************************************/
 
-#define XHCI_TIME_POSTPOWER 250
+#define XHCI_TIME_POSTPOWER 500
 
 // Check if device attached to port
 static void
@@ -472,9 +472,9 @@ configure_xhci(void *data)
 
     dprintf(3, "%s: resetting\n", __func__);
     writel(&xhci->op->usbcmd, XHCI_CMD_HCRST);
-    if (wait_bit(&xhci->op->usbcmd, XHCI_CMD_HCRST, 0, 500) != 0)
+    if (wait_bit(&xhci->op->usbcmd, XHCI_CMD_HCRST, 0, 1000) != 0)
         goto fail;
-    if (wait_bit(&xhci->op->usbsts, XHCI_STS_CNR, 0, 500) != 0)
+    if (wait_bit(&xhci->op->usbsts, XHCI_STS_CNR, 0, 1000) != 0)
         goto fail;
 
     writel(&xhci->op->config, xhci->slots);
