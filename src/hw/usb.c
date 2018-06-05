@@ -417,15 +417,11 @@ usb_hub_port_setup(void *data)
             dprintf(3, "USB: Port %d device connected\n", port + 1);
             break;
         }
-        if (ret < 0) {
+        if (ret < 0 || timer_check(hub->detectend)) {
             dprintf(3, "USB: Port %d no device found\n", port + 1);
             goto done;
         }
-        if(timer_check(hub->detectend)) {
-            dprintf(3, "USB: device detect time end on port %d\n", port + 1);
-            goto done;
-        }
-        msleep(5);
+        msleep(20);
     }
 
     // XXX - wait USB_TIME_ATTDB time?
@@ -438,6 +434,8 @@ usb_hub_port_setup(void *data)
         goto resetfail;
     }
     usbdev->speed = ret;
+
+    msleep(20);
 
     // Set address of port
     ret = usb_set_address(usbdev);
