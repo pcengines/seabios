@@ -5,6 +5,10 @@ Fourth digit in release number means PC Engines patch.
 
 ## [Unreleased]
 
+## [rel-1.11.0.5] - 2018-06-08
+### Fixed
+- USB timings
+
 ## [rel-1.11.0.4] - 2018-04-06
 ### Fixed
 - links to comparison between tags
@@ -62,7 +66,8 @@ Fourth digit in release number means PC Engines patch.
 ### Fixed
 - prevented from printing character multiple times
 
-[Unreleased]: https://github.com/pcengines/seabios/compare/rel-1.11.0.4...apu_support
+[Unreleased]: https://github.com/pcengines/seabios/compare/rel-1.11.0.5...apu_support
+[rel-1.11.0.5]: https://github.com/pcengines/seabios/compare/rel-1.11.0.4...rel-1.11.0.5
 [rel-1.11.0.4]: https://github.com/pcengines/seabios/compare/rel-1.11.0.3...rel-1.11.0.4
 [rel-1.11.0.3]: https://github.com/pcengines/seabios/compare/rel-1.11.0.2...rel-1.11.0.3
 [rel-1.11.0.2]: https://github.com/pcengines/seabios/compare/rel-1.11.0.1...rel-1.11.0.2
