@@ -23,4 +23,6 @@ void e820_prepboot(void);
 extern struct e820entry e820_list[];
 extern int e820_count;
 
+extern void coreboot_update_memtable(void);
+
 #endif // e820map.h

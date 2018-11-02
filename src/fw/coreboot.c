@@ -236,10 +236,6 @@ coreboot_preinit(void)
         e820_add(m->start, m->size, type);
     }
 
-    // Ughh - coreboot likes to set a map at 0x0000-0x1000, but this
-    // confuses grub.  So, override it.
-    e820_add(0, 16*1024, E820_RAM);
-
     struct cb_cbmem_ref *cbref = find_cb_subtable(cbh, CB_TAG_CBMEM_CONSOLE);
     if (cbref) {
         cbcon = (void*)(u32)cbref->cbmem_addr;
@@ -613,4 +609,50 @@ cbfs_payload_setup(void)
         char *desc = znprintf(MAXDESCSIZE, "Payload [%s]", &filename[4]);
         boot_add_cbfs(cfile->fhdr, desc, bootprio_find_named_rom(filename, 0));
     }
+}
+
+// Mirror changes done on e820 to coreboot tables.
+void
+coreboot_update_memtable(void)
+{
+    if (!CONFIG_COREBOOT)
+        return;
+
+    // Find coreboot table.
+    struct cb_header *cbh = find_cb_table();
+    if (!cbh) {
+        dprintf(1, "Unable to find coreboot table!\n");
+        return;
+    }
+    char *end = (char *)cbh + sizeof(*cbh) + cbh->table_bytes;
+    dprintf(3, "Now attempting to find coreboot memory map\n");
+    struct cb_memory *dst = find_cb_subtable(cbh, CB_TAG_MEMORY);
+    if (!dst) {
+        dprintf(1, "Unable to find coreboot memory table!\n");
+        return;
+    }
+
+    // Remove old memory table, overwriting it with following subtables
+    // and append an updated memory table to the end.
+    u32 old_size = dst->size;
+    char *src = (char *)dst + old_size;
+    memcpy(dst, src, (end - src));
+    dst = (struct cb_memory *)(end - old_size);
+    u32 new_size = e820_count * sizeof(struct e820entry);
+    dst->tag = CB_TAG_MEMORY;
+    // Tables are binary compatible, except that CB_MEM_TABLE became
+    // E820_RESERVED.
+    memcpy((char*)dst + sizeof(struct cb_memory), e820_list, new_size);
+    new_size += sizeof(struct cb_memory);
+    dst->size = new_size;
+
+    // Update header fields (size and checksum).
+    cbh->table_bytes += new_size - old_size;
+    cbh->table_checksum = ipchksum((char*)cbh + sizeof(*cbh), cbh->table_bytes);
+    cbh->header_checksum = 0;
+    cbh->header_checksum = ipchksum((char*)cbh, sizeof(*cbh));
+
+    // Ughh - coreboot likes to set a map at 0x0000-0x1000, but this
+    // confuses grub.  So, override it in e820 only.
+    e820_add(0, 16*1024, E820_RAM);
 }

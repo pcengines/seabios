@@ -148,5 +148,7 @@ e820_remove(u64 start, u64 size)
 void
 e820_prepboot(void)
 {
+    // Synchronize memory maps.
+    coreboot_update_memtable();
     dump_map();
 }
