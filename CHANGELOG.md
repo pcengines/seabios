@@ -5,6 +5,10 @@ Fourth digit in release number means PC Engines patch.
 
 ## [Unreleased]
 
+## [rel-1.11.0.6] - 2018-11-07
+### Fixed
+- e820 memory table that caused errors in 2GB boards in memtest86+
+
 ## [rel-1.11.0.5] - 2018-06-08
 ### Fixed
 - USB timings
