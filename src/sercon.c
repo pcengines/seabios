@@ -45,7 +45,6 @@ static void cursor_pos_set(u8 row, u8 col)
 
 static char **BootOrder VARVERIFY32INIT;
 static int BootOrderCount;
-static int scon;
 
 static void
 loadBootOrder(void)
@@ -121,6 +120,20 @@ static int find_scon(void)
     }
     return -1;
 }
+
+static int find_com2en(void)
+{
+    int i = 0;
+    for (i=0; i < BootOrderCount; i++)
+    {
+        if (find_glob_prefix("com2en0", BootOrder[i]))
+            return 0;
+        if (find_glob_prefix("com2en1", BootOrder[i]))
+            return 1;
+    }
+    return -1;
+}
+
 
 /****************************************************************
  * serial console output
@@ -598,6 +611,7 @@ void sercon_setup(void)
 
     struct segoff_s seabios, vgabios;
     u16 addr;
+    int scon, com2_enabled;
 
     addr = romfile_loadint("etc/sercon-port", 0);
     if (!addr)
@@ -606,6 +620,10 @@ void sercon_setup(void)
     loadBootOrder();
 
     scon = find_scon();
+    com2_enabled = find_com2en();
+
+    if (com2_enabled == 1 && addr == 0x3f8)
+        addr = 0x2f8;
 
     dprintf(1, "sercon: using ioport 0x%x\n", addr);
 
