@@ -535,6 +535,14 @@ static int menu_key_pressed = 0;
 
 #define DEFAULT_BOOTMENU_WAIT 2500
 
+static const char menuchars[] = {
+    '1', '2', '3', '4', '5', '6', '7', '8', '9',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i',
+    'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r',
+    's', /* skip t (tpm menu) */
+    'u', 'v', 'w', 'x', 'y', 'z'
+};
+
 // Show IPL option menu.
 void
 interactive_bootmenu(void)
