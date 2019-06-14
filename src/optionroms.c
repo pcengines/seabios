@@ -141,7 +141,7 @@ init_optionrom(struct rom_header *rom, u16 bdf, int isvga)
 
     if (isvga)
 	// Only init vga roms here.
-	callrom(newrom, bdf);
+	    callrom(newrom, bdf);
 
     return rom_confirm(newrom->size * 512);
 }
@@ -191,13 +191,12 @@ deploy_romfile(struct romfile_s *file)
 static void
 run_file_roms(const char *prefix, int isvga, u64 *sources)
 {
-    int pxen = find_pxen();
     struct romfile_s *file = NULL;
     for (;;) {
         file = romfile_findprefix(prefix, file);
         if (!file)
             break;
-        if ((strcmp(file->name, "genroms/pxe.rom") == 0) && (pxen == 1)) {
+        if (strcmp(file->name, "genroms/pxe.rom") == 0){
             struct rom_header *rom = deploy_romfile(file);
             if (rom) {
                 setRomSource(sources, rom, (u32)file);
@@ -369,6 +368,8 @@ optionrom_setup(void)
 
     // All option roms found and deployed - now build BEV/BCV vectors.
 
+    int pxen = find_pxen();
+
     u32 pos = post_vga;
     while (pos < rom_get_last()) {
         struct rom_header *rom = (void*)pos;
@@ -387,10 +388,10 @@ optionrom_setup(void)
         // PnP rom - check for BEV and BCV boot capabilities.
         int instance = 0;
         while (pnp) {
-            if (pnp->bev)
+            if (pnp->bev && (pxen == 1))
                 boot_add_bev(FLATPTR_TO_SEG(rom), pnp->bev, pnp->productname
                              , getRomPriority(sources, rom, instance++));
-            else if (pnp->bcv)
+            else if (pnp->bcv && (pxen == 1))
                 boot_add_bcv(FLATPTR_TO_SEG(rom), pnp->bcv, pnp->productname
                              , getRomPriority(sources, rom, instance++));
             else
