@@ -317,6 +317,8 @@ fail:
 static void
 init_pcirom(struct pci_device *pci, int isvga, u64 *sources)
 {
+    int pxen = find_pxen();
+
     dprintf(4, "Attempting to init PCI bdf %pP (vd %04x:%04x)\n"
             , pci, pci->vendor, pci->device);
 
@@ -325,15 +327,20 @@ init_pcirom(struct pci_device *pci, int isvga, u64 *sources)
              , pci->vendor, pci->device);
     struct romfile_s *file = romfile_find(fname);
     struct rom_header *rom = NULL;
-    if (file)
-        rom = deploy_romfile(file);
-    else if (RunPCIroms > 1 || (RunPCIroms == 1 && isvga))
-        rom = map_pcirom(pci);
-    if (! rom)
-        // No ROM present.
-        return;
-    setRomSource(sources, rom, RS_PCIROM | (u32)pci);
-    init_optionrom(rom, pci->bdf, isvga);
+
+    if (pxen){
+        if((strcmp(file->name, "pci8086,157b.rom") == 0) || (strcmp(file->name, "pci8086,1539.rom") == 0)){
+            if (file)
+                rom = deploy_romfile(file);
+            else if (RunPCIroms > 1 || (RunPCIroms == 1 && isvga))
+                rom = map_pcirom(pci);
+            if (! rom)
+                // No ROM present.
+                return;
+            setRomSource(sources, rom, RS_PCIROM | (u32)pci);
+            init_optionrom(rom, pci->bdf, isvga);
+        }
+    } 
 }
 
 
