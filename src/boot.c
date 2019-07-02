@@ -133,11 +133,11 @@ int find_usben(void)
 int find_scon(void)
 {
     int i = 0;
-    for (i=0; i < BootorderCount; i++)
+    for (i=0; i < BootOrderCount; i++)
     {
-        if (glob_prefix("scon0", Bootorder[i]))
+        if (find_glob_prefix("scon0", Bootorder[i]))
             return 0;
-        if (glob_prefix("scon1", Bootorder[i]))
+        if (find_glob_prefix("scon1", BootOrder[i]))
             return 1;
     }
     return -1;
@@ -146,11 +146,11 @@ int find_scon(void)
 int find_com2en(void)
 {
     int i = 0;
-    for (i=0; i < BootorderCount; i++)
+    for (i=0; i < BootOrderCount; i++)
     {
-        if (glob_prefix("com2en0", Bootorder[i]))
+        if (find_glob_prefix("com2en0", Bootorder[i]))
             return 0;
-        if (glob_prefix("com2en1", Bootorder[i]))
+        if (find_glob_prefix("com2en1", Bootorder[i]))
             return 1;
     }
     return -1;
