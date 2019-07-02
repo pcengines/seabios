@@ -196,12 +196,10 @@ run_file_roms(const char *prefix, int isvga, u64 *sources)
         file = romfile_findprefix(prefix, file);
         if (!file)
             break;
-        if (strcmp(file->name, "genroms/pxe.rom") == 0){
-            struct rom_header *rom = deploy_romfile(file);
-            if (rom) {
-                setRomSource(sources, rom, (u32)file);
-                init_optionrom(rom, 0, isvga);
-            }
+        struct rom_header *rom = deploy_romfile(file);
+        if (rom) {
+            setRomSource(sources, rom, (u32)file);
+            init_optionrom(rom, 0, isvga);
         }
     }
 }
@@ -328,19 +326,22 @@ init_pcirom(struct pci_device *pci, int isvga, u64 *sources)
     struct romfile_s *file = romfile_find(fname);
     struct rom_header *rom = NULL;
 
-    if (pxen){
-        if((strcmp(file->name, "pci8086,157b.rom") == 0) || (strcmp(file->name, "pci8086,1539.rom") == 0)){
-            if (file)
-                rom = deploy_romfile(file);
-            else if (RunPCIroms > 1 || (RunPCIroms == 1 && isvga))
-                rom = map_pcirom(pci);
-            if (! rom)
-                // No ROM present.
+    if((strcmp(file->name, "pci8086,157b.rom") == 0) || 
+       (strcmp(file->name, "pci8086,1539.rom") == 0) ||
+       (strcmp(file->name, "pci10ec,8168.rom") == 0)) {
+            if (pxen == 0)
                 return;
-            setRomSource(sources, rom, RS_PCIROM | (u32)pci);
-            init_optionrom(rom, pci->bdf, isvga);
-        }
-    } 
+    }
+
+    if (file)
+        rom = deploy_romfile(file);
+    else if (RunPCIroms > 1 || (RunPCIroms == 1 && isvga))
+        rom = map_pcirom(pci);
+    if (!rom)
+        // No ROM present.
+        return;
+    setRomSource(sources, rom, RS_PCIROM | (u32)pci);
+    init_optionrom(rom, pci->bdf, isvga);
 }
 
 
