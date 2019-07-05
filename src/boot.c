@@ -762,7 +762,7 @@ interactive_bootmenu(void)
         return;
 
     int n_key = 0;
-    int pxen = find_pxen();
+    pxen = find_pxen();
 
     while (get_keystroke(0) >= 0)
         ;
@@ -807,6 +807,7 @@ interactive_bootmenu(void)
     }
     // Show menu items if menu-key is pressed
     else {
+        menu_key_pressed = 1;
         printf("Select boot device:\n\n");
         wait_threads();
 
