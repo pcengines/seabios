@@ -16,25 +16,16 @@ static void* fmap_entry = NULL;
 
 void find_fmap_directory(void)
 {
-    struct fmap *fmap = malloc_tmp(sizeof(*fmap));
-
-    if (!fmap) {
-        warn_noalloc();
-        dprintf(1, "FMAP not found\n");
-        return;
-    }
-
     void *offset = ROM_BEGIN;
 
     while (offset <= ROM_END) {
-        iomemcpy((void *)fmap, offset, sizeof(fmap->signature));
-        if (!memcmp(fmap->signature, FMAP_SIGNATURE,
-            sizeof(fmap->signature))) {
+        if (!memcmp(offset, FMAP_SIGNATURE, 8)) {
                 fmap_entry = offset;
-                dprintf(1, "FMAP found @ 0x%p\n", fmap_entry);
+                dprintf(1, "FMAP found @ %p\n", fmap_entry);
                 return;
             }
-        offset += 0x16;
+        /* Currently FMAP signature is assumed to be 0x100 bytes aligned */
+        offset += 0x100;
     }
     dprintf(1, "FMAP not found\n");
 }
@@ -49,32 +40,30 @@ int fmap_locate_area(const char *name, struct region *ar)
     /* Start reading the areas just after fmap header. */
     offset = sizeof(struct fmap);
 
+    struct fmap_area *area = malloc_tmp(sizeof(*area));
+    if (!area) {
+        warn_noalloc();
+        return -1;
+    }
+
     while (1) {
-        struct fmap_area *area = malloc_tmp(sizeof(*area));
-        if (!area) {
-            warn_noalloc();
-            break;
-        }
         iomemcpy(area, fmap_entry + offset, sizeof(*area));
 
-        if (area == NULL)
-            return -1;
-
         if (strcmp((const char *)area->name, name)) {
-            free(area);
             offset += sizeof(struct fmap_area);
             continue;
         }
 
-        dprintf(1, "FMAP: area %s found @ 0x%p (%d bytes)\n",
+        dprintf(1, "FMAP: area %s found @ %p (%d bytes)\n",
                name, (void *) area->offset, area->size);
 
-        ar->offset = area->offset;
+        ar->offset = *(u32 *)ROM_BEGIN + area->offset;
         ar->size = area->size;
 
         return 0;
     }
 
+    free(area);
     dprintf(1, "FMAP: area %s not found\n", name);
 
     return -1;
