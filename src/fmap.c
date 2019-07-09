@@ -9,12 +9,6 @@
 #include "output.h" // dprintf
 #include "fmap.h"   // find_fmap_directory
 
-#define FMAP_SIGNATURE		"__FMAP__"
-#define FMAP_VER_MAJOR		1	/* this header's FMAP minor version */
-#define FMAP_VER_MINOR		1	/* this header's FMAP minor version */
-#define FMAP_STRLEN		32	/* maximum length for strings, */
-					/* including null-terminator */
-
 static void* fmap_entry = NULL;
 
 void find_fmap_directory(void)

@@ -1,3 +1,18 @@
+// Flashmap support.
+//
+// Copyright (C) 2019 3mdeb
+//
+// This file may be distributed under the terms of the GNU LGPLv3 license.
+
+#ifndef _FMAP_H
+#define _FMAP_H
+
+#define FMAP_SIGNATURE		"__FMAP__"
+#define FMAP_VER_MAJOR		1	/* this header's FMAP minor version */
+#define FMAP_VER_MINOR		1	/* this header's FMAP minor version */
+#define FMAP_STRLEN		32	/* maximum length for strings, */
+					/* including null-terminator */
+
 enum fmap_flags {
     FMAP_AREA_STATIC		= 1 << 0,
     FMAP_AREA_COMPRESSED	= 1 << 1,
@@ -31,3 +46,6 @@ struct region {
 };
 
 void find_fmap_directory(void);
+int fmap_locate_area(const char *name, struct region *ar);
+
+#endif

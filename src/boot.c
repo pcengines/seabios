@@ -43,12 +43,12 @@ loadBootorder(void)
         if (fmap_locate_area("bootorder", &bootorder_region) == -1)
             return;
         else {
-            f = malloc_tmphigh(bootorder_region->size);
+            f = malloc_tmphigh(bootorder_region.size);
             if (!f) {
                 warn_noalloc();
                 return;
             }
-            iomemcpy(f,bootorder_region->offset, bootorder_region->size);
+            iomemcpy(f, (void *)bootorder_region.offset, bootorder_region.size);
         }
     }
 
