@@ -12,7 +12,7 @@
 static void* fmap_entry = NULL;
 
 #define ROM_BEGIN       ((void *)0xFF800000)
-#define ROM_END         ((void *)0xFFFFFFE0)
+#define ROM_END         ((void *)0xFFFFFFFF)
 
 void find_fmap_directory(void)
 {
@@ -55,11 +55,11 @@ int fmap_locate_area(const char *name, struct region *ar)
         }
 
         dprintf(1, "FMAP: area %s found @ %p (%d bytes)\n",
-               name, (void *) area->offset, area->size);
+                name, (void *) area->offset, area->size);
 
-        ar->offset = *(u32 *)ROM_BEGIN + area->offset;
+        ar->offset = (u32)ROM_BEGIN + area->offset;
         ar->size = area->size;
-
+        free(area);
         return 0;
     }
 

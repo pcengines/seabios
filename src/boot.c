@@ -43,7 +43,7 @@ loadBootorder(void)
         if (fmap_locate_area("BOOTORDER", &bootorder_region) == -1)
             return;
         else {
-            f = malloc_tmphigh(bootorder_region.size);
+            f = malloc_tmp(bootorder_region.size);
             if (!f) {
                 warn_noalloc();
                 return;
