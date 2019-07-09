@@ -40,7 +40,7 @@ loadBootorder(void)
     struct region bootorder_region;
     char *f = romfile_loadfile("bootorder", NULL);
     if (!f) {
-        if (fmap_locate_area("bootorder", &bootorder_region) == -1)
+        if (fmap_locate_area("BOOTORDER", &bootorder_region) == -1)
             return;
         else {
             f = malloc_tmphigh(bootorder_region.size);

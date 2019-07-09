@@ -11,22 +11,32 @@
 
 static void* fmap_entry = NULL;
 
+#define ROM_BEGIN       ((void *)0xFF800000)
+#define ROM_END         ((void *)0xFFFFFFE0)
+
 void find_fmap_directory(void)
 {
-    void *rom_begin = 0xFF800000;
-    struct fmap *fmap;
+    struct fmap *fmap = malloc_tmp(sizeof(*fmap));
 
-    fmap = (struct fmap *)rom_begin;
+    if (!fmap) {
+        warn_noalloc();
+        dprintf(1, "FMAP not found\n");
+        return;
+    }
 
-    while (fmap < 0xFFFFFFE0) {
+    void *offset = ROM_BEGIN;
+
+    while (offset <= ROM_END) {
+        iomemcpy((void *)fmap, offset, sizeof(fmap->signature));
         if (!memcmp(fmap->signature, FMAP_SIGNATURE,
             sizeof(fmap->signature))) {
-                fmap_entry = (void *)fmap;
+                fmap_entry = offset;
                 dprintf(1, "FMAP found @ 0x%p\n", fmap_entry);
-                break;
+                return;
             }
-        fmap += 0x16;
+        offset += 0x16;
     }
+    dprintf(1, "FMAP not found\n");
 }
 
 int fmap_locate_area(const char *name, struct region *ar)
@@ -57,7 +67,7 @@ int fmap_locate_area(const char *name, struct region *ar)
         }
 
         dprintf(1, "FMAP: area %s found @ 0x%p (%d bytes)\n",
-               name, area->offset, area->size);
+               name, (void *) area->offset, area->size);
 
         ar->offset = area->offset;
         ar->size = area->size;
@@ -65,7 +75,7 @@ int fmap_locate_area(const char *name, struct region *ar)
         return 0;
     }
 
-    printk(BIOS_DEBUG, "FMAP: area %s not found\n", name);
+    dprintf(1, "FMAP: area %s not found\n", name);
 
     return -1;
 }
