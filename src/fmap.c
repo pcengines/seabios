@@ -40,16 +40,19 @@ int fmap_locate_area(const char *name, struct region *ar)
     /* Start reading the areas just after fmap header. */
     offset = sizeof(struct fmap);
 
-    struct fmap_area *area = malloc_tmp(sizeof(*area));
-    if (!area) {
-        warn_noalloc();
-        return -1;
-    }
-
     while (1) {
+        struct fmap_area *area = malloc_tmp(sizeof(*area));
+        if (!area) {
+            warn_noalloc();
+            break;
+        }
         iomemcpy(area, fmap_entry + offset, sizeof(*area));
 
+        if (area == NULL)
+            return -1;
+
         if (strcmp((const char *)area->name, name)) {
+            free(area);
             offset += sizeof(struct fmap_area);
             continue;
         }
