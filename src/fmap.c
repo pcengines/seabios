@@ -12,20 +12,29 @@
 static void* fmap_entry = NULL;
 
 #define ROM_BEGIN       ((void *)0xFF800000)
-#define ROM_END         ((void *)0xFFFFFFFF)
+#define ROM_END         ((void *)0xFFFFFFE0)
 
 void find_fmap_directory(void)
 {
+    struct fmap *fmap = malloc_tmp(sizeof(*fmap));
+
+    if (!fmap) {
+        warn_noalloc();
+        dprintf(1, "FMAP not found\n");
+        return;
+    }
+
     void *offset = ROM_BEGIN;
 
     while (offset <= ROM_END) {
-        if (!memcmp(offset, FMAP_SIGNATURE, 8)) {
+        iomemcpy((void *)fmap, offset, sizeof(fmap->signature));
+        if (!memcmp(fmap->signature, FMAP_SIGNATURE,
+            sizeof(fmap->signature))) {
                 fmap_entry = offset;
-                dprintf(1, "FMAP found @ %p\n", fmap_entry);
+                dprintf(1, "FMAP found @ 0x%p\n", fmap_entry);
                 return;
             }
-        /* Currently FMAP signature is assumed to be 0x100 bytes aligned */
-        offset += 0x100;
+        offset += 0x16;
     }
     dprintf(1, "FMAP not found\n");
 }
@@ -57,8 +66,13 @@ int fmap_locate_area(const char *name, struct region *ar)
             continue;
         }
 
+<<<<<<< HEAD
         dprintf(1, "FMAP: area %s found @ %p (%d bytes)\n",
                 name, (void *) area->offset, area->size);
+=======
+        dprintf(1, "FMAP: area %s found @ 0x%p (%d bytes)\n",
+               name, (void *) area->offset, area->size);
+>>>>>>> a775895c... src/fmap.c: fix variable types
 
         ar->offset = (u32)ROM_BEGIN + area->offset;
         ar->size = area->size;
@@ -66,7 +80,10 @@ int fmap_locate_area(const char *name, struct region *ar)
         return 0;
     }
 
+<<<<<<< HEAD
     free(area);
+=======
+>>>>>>> a775895c... src/fmap.c: fix variable types
     dprintf(1, "FMAP: area %s not found\n", name);
 
     return -1;
