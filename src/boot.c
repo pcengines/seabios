@@ -268,7 +268,6 @@ loadBootorder(void)
         }
     }
 
-
     int i = 0;
     BootorderCount = 1;
     while (f[i]) {
