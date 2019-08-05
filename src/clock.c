@@ -302,7 +302,7 @@ clock_update(void)
 void VISIBLE16
 handle_08(void)
 {
-    debug_isr(DEBUG_ISR_08);
+    debug_isr(DEBUG_ISR_02);
     clock_update();
 
     // chain to user timer tick INT #0x1c
