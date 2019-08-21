@@ -10,6 +10,7 @@
 #include "bregs.h" // struct bregs
 #include "config.h" // CONFIG_*
 #include "e820map.h" // e820_add
+#include "fmap.h" // find_fmap_directory
 #include "fw/paravirt.h" // qemu_cfg_preinit
 #include "fw/xen.h" // xen_preinit
 #include "hw/pic.h" // pic_setup
@@ -107,6 +108,7 @@ interface_init(void)
     // Setup romfile items.
     qemu_cfg_init();
     coreboot_cbfs_init();
+    find_fmap_directory();
     multiboot_init();
 
     // Setup ivt/bda/ebda
