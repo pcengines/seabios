@@ -526,10 +526,6 @@ void sercon_setup(void)
         return;
 
     scon = find_scon();
-    com2_enabled = find_com2en();
-
-    if (com2_enabled == 1 && addr == 0x3f8)
-        addr = 0x2f8;
 
     dprintf(1, "sercon: using ioport 0x%x\n", addr);
 

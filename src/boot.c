@@ -116,44 +116,29 @@ find_prio(const char *glob)
     return -1;
 }
 
-// search for 'ipxe enable' bit value
-int find_pxen(void)
+static int is_knob_enabled(const char *s, int dflt) 
 {
-    int i = 0;
-    for (i=0; i < BootorderCount; i++)
-    {
-        if (glob_prefix("pxen0", Bootorder[i]))
-            return 0;
-        if (glob_prefix("pxen1", Bootorder[i]))
-            return 1;
-    }
-    return -1;
-}
+    char buffer[10];
 
+    if (!vpd_gets(s, buffer, sizeof(buffer), VPD_RW))
+        if (!vpd_gets(s, buffer, sizeof(buffer), VPD_RO))
+            return dflt;
+
+    if (strcmp("enabled", buffer) == 0)
+        return 1;
+    else
+        return 0;
+}
 // search for 'boot from usb' bit value
 // if it doesn't exist - set to enabled
 int find_usben(void)
 {
-     int i;
-     for (i=0; i < BootorderCount; i++)
-     {
-         if (glob_prefix("usben0", Bootorder[i]))
-             return 0;
-     }
-     return 1;
+    return is_knob_enabled("usben", 1);
 }
 
 int find_scon(void)
 {
-    int i = 0;
-    for (i=0; i < BootorderCount; i++)
-    {
-        if (glob_prefix("scon0", Bootorder[i]))
-            return 0;
-        if (glob_prefix("scon1", Bootorder[i]))
-            return 1;
-    }
-    return -1;
+    return is_knob_enabled("scon", 1);
 }
 
 int find_com2en(void)
@@ -542,9 +527,6 @@ interactive_bootmenu(void)
 {
     // XXX - show available drives?
 
-    int n_key = 0;
-    pxen = find_pxen();
-
     if (! CONFIG_BOOTMENU || !romfile_loadint("etc/show-boot-menu", 1))
         return;
 
@@ -561,13 +543,15 @@ interactive_bootmenu(void)
     enable_bootsplash();
     int scan_code = get_keystroke(menutime);
     disable_bootsplash();
-
-    // 0x31 for N or n key
-    if (scan_code == 0x31 && pxen == 1)
-        n_key = 1;
-
-    if (scan_code != menukey && n_key != 1)
+    if (scan_code != menukey)
         return;
+
+    // // 0x31 for N or n key
+    // if (scan_code == 0x31 && pxen == 1)
+    //     n_key = 1;
+
+    // if (scan_code != menukey && n_key != 1)
+    //     return;
 
     while (get_keystroke(0) >= 0)
         ;
@@ -577,18 +561,18 @@ interactive_bootmenu(void)
     char find_iPXE[5];
     struct bootentry_s *pos;
 
-    // If N key is pressed, do not print boot menu
-    // and boot directly from iPXE
-    if (n_key) {
-        hlist_for_each_entry(pos, &BootList, node) {
-            maxmenu++;
-            strtcpy(find_iPXE, pos->description, 5);
-            if (strcmp(find_iPXE, "iPXE") == 0)
-                choice = maxmenu;
-        }
-    }
+    // // If N key is pressed, do not print boot menu
+    // // and boot directly from iPXE
+    // if (n_key) {
+    //     hlist_for_each_entry(pos, &BootList, node) {
+    //         maxmenu++;
+    //         strtcpy(find_iPXE, pos->description, 5);
+    //         if (strcmp(find_iPXE, "iPXE") == 0)
+    //             choice = maxmenu;
+    //     }
+    // }
     // Show menu items if menu-key is pressed
-    else {
+    // else {
         menu_key_pressed = 1;
         printf("Select boot device:\n\n");
         wait_threads();
@@ -626,7 +610,7 @@ interactive_bootmenu(void)
             return;
 
         choice = scan_code - 1;
-    }
+    //}
 
     // Find entry and make top priority.
     hlist_for_each_entry(pos, &BootList, node) {
@@ -833,8 +817,7 @@ do_boot(int seq_nr)
     if (! CONFIG_BOOT)
         panic("Boot support not compiled in.\n");
 
-    if (seq_nr >= BEVCount || (HaveHDBoot == 0 && pxen == 0 &&
-                               menu_key_pressed == 0))
+    if (seq_nr >= BEVCount || BEVCount < 2)
         boot_fail();
 
     // Boot the given BEV type.

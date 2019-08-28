@@ -191,18 +191,16 @@ deploy_romfile(struct romfile_s *file)
 static void
 run_file_roms(const char *prefix, int isvga, u64 *sources)
 {
-    int pxen = find_pxen();
     struct romfile_s *file = NULL;
     for (;;) {
         file = romfile_findprefix(prefix, file);
         if (!file)
             break;
-        if ((strcmp(file->name, "genroms/pxe.rom") == 0) && (pxen == 1)) {
-            struct rom_header *rom = deploy_romfile(file);
-            if (rom) {
-                setRomSource(sources, rom, (u32)file);
-                init_optionrom(rom, 0, isvga);
-            }
+        
+        struct rom_header *rom = deploy_romfile(file);
+        if (rom) {
+            setRomSource(sources, rom, (u32)file);
+            init_optionrom(rom, 0, isvga);
         }
     }
 }
