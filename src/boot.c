@@ -9,6 +9,7 @@
 #include "bregs.h" // struct bregs
 #include "config.h" // CONFIG_*
 #include "fmap.h"   // fmap_locate_area
+#include "fw/vpd.h" // qemu_cfg_show_boot_menu
 #include "fw/paravirt.h" // qemu_cfg_show_boot_menu
 #include "hw/pci.h" // pci_bdf_to_*
 #include "hw/pcidevice.h" // struct pci_device
@@ -296,6 +297,20 @@ loadBootorder(void)
     } while (f);
 }
 
+static int is_knob_enabled(const char *s, int dflt) 
+{
+    char buffer[10];
+
+    if (!vpd_gets(s, buffer, sizeof(buffer), VPD_RW))
+        if (!vpd_gets(s, buffer, sizeof(buffer), VPD_RO))
+            return dflt;
+
+    if (strcmp("enabled", buffer) == 0)
+        return 1;
+    else
+        return 0;
+}
+
 // Search the bootorder list for the given glob pattern.
 static int
 find_prio(const char *glob)
@@ -308,57 +323,26 @@ find_prio(const char *glob)
     return -1;
 }
 
-// search for 'ipxe enable' bit value
-int find_pxen(void)
-{
-    int i = 0;
-    for (i=0; i < BootorderCount; i++)
-    {
-        if (glob_prefix("pxen0", Bootorder[i]))
-            return 0;
-        if (glob_prefix("pxen1", Bootorder[i]))
-            return 1;
-    }
-    return -1;
-}
-
 // search for 'boot from usb' bit value
 // if it doesn't exist - set to enabled
 int find_usben(void)
 {
-     int i;
-     for (i=0; i < BootorderCount; i++)
-     {
-         if (glob_prefix("usben0", Bootorder[i]))
-             return 0;
-     }
-     return 1;
+    return is_knob_enabled("usben", 1);
 }
 
 int find_scon(void)
 {
-    int i = 0;
-    for (i=0; i < BootorderCount; i++)
-    {
-        if (glob_prefix("scon0", Bootorder[i]))
-            return 0;
-        if (glob_prefix("scon1", Bootorder[i]))
-            return 1;
-    }
-    return -1;
+    return is_knob_enabled("scon", 1);
 }
 
 int find_com2en(void)
 {
-    int i = 0;
-    for (i=0; i < BootorderCount; i++)
-    {
-        if (glob_prefix("com2en0", Bootorder[i]))
-            return 0;
-        if (glob_prefix("com2en1", Bootorder[i]))
-            return 1;
-    }
-    return -1;
+    return is_knob_enabled("com2en", 1);
+}
+
+int find_pxen(void)
+{
+    return is_knob_enabled("pxen", 0);
 }
 
 u8 is_bootprio_strict(void)
