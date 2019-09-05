@@ -337,7 +337,7 @@ int find_scon(void)
 
 int find_com2en(void)
 {
-    return is_knob_enabled("com2en", 1);
+    return is_knob_enabled("com2en", 0);
 }
 
 int find_pxen(void)
