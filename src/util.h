@@ -43,12 +43,6 @@ int find_usben(void);
 int find_scon(void);
 int find_com2en(void);
 struct chs_s;
-int boot_lchs_find_pci_device(struct pci_device *pci, struct chs_s *chs);
-int boot_lchs_find_scsi_device(struct pci_device *pci, int target, int lun,
-                               struct chs_s *chs);
-int boot_lchs_find_ata_device(struct pci_device *pci, int chanid, int slave,
-                              struct chs_s *chs);
-
 // bootsplash.c
 void enable_vga_console(void);
 void enable_bootsplash(void);
