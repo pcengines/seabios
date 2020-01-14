@@ -350,7 +350,11 @@ int find_com2en(void)
 
 u8 is_bootprio_strict(void)
 {
-    return find_prio("HALT") >= 0;
+    static int prio_halt = -2;
+
+    if (prio_halt == -2)
+        prio_halt = find_prio("HALT");
+    return prio_halt >= 0;
 }
 
 int bootprio_find_pci_device(struct pci_device *pci)
