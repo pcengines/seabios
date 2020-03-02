@@ -297,18 +297,30 @@ loadBootorder(void)
     } while (f);
 }
 
-static int is_knob_enabled(const char *s, int dflt) 
+static u8 is_tag_enabled(const char *name, u8 dflt)
 {
-    char buffer[10];
+	int tag_size = 10;
+	char vpd_tag[tag_size];
 
-    if (!vpd_gets(s, buffer, sizeof(buffer), VPD_RW))
-        if (!vpd_gets(s, buffer, sizeof(buffer), VPD_RO))
-            return dflt;
+    /* Check if key is present in RW and has correct value */
+    if (vpd_gets(name, vpd_tag, tag_size, VPD_RW)){
+        if (!memcmp(vpd_tag, "enabled", strlen("enabled")))
+            return 1;
+        else if (!memcmp(vpd_tag, "disabled", strlen("disabled")))
+            return 0;
+    }
 
-    if (strcmp("enabled", buffer) == 0)
-        return 1;
-    else
-        return 0;
+    /* Key is not present in RW or has incorrect value, check RO */
+    if (vpd_gets(name, vpd_tag, tag_size, VPD_RO)){
+        if (!memcmp(vpd_tag, "enabled", strlen("enabled")))
+            return 1;
+        else if (!memcmp(vpd_tag, "disabled", strlen("disabled")))
+            return 0;
+    }
+
+    /* Key is not present in RW neither RO or has incorrect values,
+        take default*/
+    return dflt;
 }
 
 // Search the bootorder list for the given glob pattern.
@@ -327,22 +339,22 @@ find_prio(const char *glob)
 // if it doesn't exist - set to enabled
 int find_usben(void)
 {
-    return is_knob_enabled("usben", 1);
+    return is_tag_enabled("usben", 1);
 }
 
 int find_scon(void)
 {
-    return is_knob_enabled("scon", 1);
+    return is_tag_enabled("scon", 1);
 }
 
 int find_com2en(void)
 {
-    return is_knob_enabled("com2en", 0);
+    return is_tag_enabled("com2en", 0);
 }
 
 int find_pxen(void)
 {
-    return is_knob_enabled("pxen", 0);
+    return is_tag_enabled("pxen", 0);
 }
 
 u8 is_bootprio_strict(void)
