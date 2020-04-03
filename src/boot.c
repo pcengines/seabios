@@ -22,6 +22,221 @@
 #include "util.h" // irqtimer_calc
 #include "tcgbios.h" // tpm_*
 
+/****************************************************************
+ * Helper search functions
+ ****************************************************************/
+
+// See if 'str' starts with 'glob' - if glob contains an '*' character
+// it will match any number of characters in str that aren't a '/' or
+// the next glob character.
+static char *
+glob_prefix(const char *glob, const char *str)
+{
+    for (;;) {
+        if (!*glob && (!*str || *str == '/'))
+            return (char*)str;
+        if (*glob == '*') {
+            if (!*str || *str == '/' || *str == glob[1])
+                glob++;
+            else
+                str++;
+            continue;
+        }
+        if (*glob != *str)
+            return NULL;
+        glob++;
+        str++;
+    }
+}
+
+#define FW_PCI_DOMAIN "/pci@i0cf8"
+
+static char *
+build_pci_path(char *buf, int max, const char *devname, struct pci_device *pci)
+{
+    // Build the string path of a bdf - for example: /pci@i0cf8/isa@1,2
+    char *p = buf;
+    if (pci->parent) {
+        p = build_pci_path(p, max, "pci-bridge", pci->parent);
+    } else {
+        p += snprintf(p, buf+max-p, "%s", FW_PCI_DOMAIN);
+        if (pci->rootbus)
+            p += snprintf(p, buf+max-p, ",%x", pci->rootbus);
+    }
+
+    int dev = pci_bdf_to_dev(pci->bdf), fn = pci_bdf_to_fn(pci->bdf);
+    p += snprintf(p, buf+max-p, "/%s@%x", devname, dev);
+    if (fn)
+        p += snprintf(p, buf+max-p, ",%x", fn);
+    return p;
+}
+
+static char *
+build_scsi_path(char *buf, int max,
+                struct pci_device *pci, int target, int lun)
+{
+    // Build the string path of a scsi drive - for example:
+    // /pci@i0cf8/scsi@5/channel@0/disk@1,0
+    char *p;
+    p = build_pci_path(buf, max, "*", pci);
+    p += snprintf(p, buf+max-p, "/*@0/*@%x,%x", target, lun);
+    return p;
+}
+
+static char *
+build_ata_path(char *buf, int max,
+               struct pci_device *pci, int chanid, int slave)
+{
+    // Build the string path of an ata drive - for example:
+    // /pci@i0cf8/ide@1,1/drive@1/disk@0
+    char *p;
+    p = build_pci_path(buf, max, "*", pci);
+    p += snprintf(p, buf+max-p, "/drive@%x/disk@%x", chanid, slave);
+    return p;
+}
+
+
+/****************************************************************
+ * Boot device logical geometry
+ ****************************************************************/
+
+typedef struct BootDeviceLCHS {
+    char *name;
+    u32 lcyls;
+    u32 lheads;
+    u32 lsecs;
+} BootDeviceLCHS;
+
+static BootDeviceLCHS *BiosGeometry VARVERIFY32INIT;
+static int BiosGeometryCount;
+
+static char *
+parse_u32(char *cur, u32 *n)
+{
+    u32 m = 0;
+    if (cur) {
+        while ('0' <= *cur && *cur <= '9') {
+            m = 10 * m + (*cur - '0');
+            cur++;
+        }
+        if (*cur != '\0')
+            cur++;
+    }
+    *n = m;
+    return cur;
+}
+
+static void
+loadBiosGeometry(void)
+{
+    if (!CONFIG_HOST_BIOS_GEOMETRY)
+        return;
+    char *f = romfile_loadfile("bios-geometry", NULL);
+    if (!f)
+        return;
+
+    int i = 0;
+    BiosGeometryCount = 1;
+    while (f[i]) {
+        if (f[i] == '\n')
+            BiosGeometryCount++;
+        i++;
+    }
+    BiosGeometry = malloc_tmphigh(BiosGeometryCount * sizeof(BootDeviceLCHS));
+    if (!BiosGeometry) {
+        warn_noalloc();
+        free(f);
+        BiosGeometryCount = 0;
+        return;
+    }
+
+    dprintf(1, "bios geometry:\n");
+    i = 0;
+    do {
+        BootDeviceLCHS *d = &BiosGeometry[i];
+        d->name = f;
+        f = strchr(f, '\n');
+        if (f)
+            *(f++) = '\0';
+        char *chs_values = strchr(d->name, ' ');
+        if (chs_values)
+            *(chs_values++) = '\0';
+        chs_values = parse_u32(chs_values, &d->lcyls);
+        chs_values = parse_u32(chs_values, &d->lheads);
+        chs_values = parse_u32(chs_values, &d->lsecs);
+        dprintf(1, "%s: (%u, %u, %u)\n",
+                d->name, d->lcyls, d->lheads, d->lsecs);
+        i++;
+    } while (f);
+}
+
+// Search the bios-geometry list for the given glob pattern.
+static BootDeviceLCHS *
+boot_lchs_find(const char *glob)
+{
+    dprintf(1, "Searching bios-geometry for: %s\n", glob);
+    int i;
+    for (i = 0; i < BiosGeometryCount; i++)
+        if (glob_prefix(glob, BiosGeometry[i].name))
+            return &BiosGeometry[i];
+    return NULL;
+}
+
+int boot_lchs_find_pci_device(struct pci_device *pci, struct chs_s *chs)
+{
+    if (!CONFIG_HOST_BIOS_GEOMETRY)
+        return -1;
+    char desc[256];
+    build_pci_path(desc, sizeof(desc), "*", pci);
+    BootDeviceLCHS *b = boot_lchs_find(desc);
+    if (!b)
+        return -1;
+    chs->cylinder = (u16)b->lcyls;
+    chs->head = (u16)b->lheads;
+    chs->sector = (u16)b->lsecs;
+    return 0;
+}
+
+int boot_lchs_find_scsi_device(struct pci_device *pci, int target, int lun,
+                               struct chs_s *chs)
+{
+    if (!CONFIG_HOST_BIOS_GEOMETRY)
+        return -1;
+    if (!pci)
+        // support only pci machine for now
+        return -1;
+    // Find scsi drive - for example: /pci@i0cf8/scsi@5/channel@0/disk@1,0
+    char desc[256];
+    build_scsi_path(desc, sizeof(desc), pci, target, lun);
+    BootDeviceLCHS *b = boot_lchs_find(desc);
+    if (!b)
+        return -1;
+    chs->cylinder = (u16)b->lcyls;
+    chs->head = (u16)b->lheads;
+    chs->sector = (u16)b->lsecs;
+    return 0;
+}
+
+int boot_lchs_find_ata_device(struct pci_device *pci, int chanid, int slave,
+                              struct chs_s *chs)
+{
+    if (!CONFIG_HOST_BIOS_GEOMETRY)
+        return -1;
+    if (!pci)
+        // support only pci machine for now
+        return -1;
+    // Find ata drive - for example: /pci@i0cf8/ide@1,1/drive@1/disk@0
+    char desc[256];
+    build_ata_path(desc, sizeof(desc), pci, chanid, slave);
+    BootDeviceLCHS *b = boot_lchs_find(desc);
+    if (!b)
+        return -1;
+    chs->cylinder = (u16)b->lcyls;
+    chs->head = (u16)b->lheads;
+    chs->sector = (u16)b->lsecs;
+    return 0;
+}
+
 
 /****************************************************************
  * Boot priority ordering
@@ -66,29 +281,6 @@ loadBootorder(void)
         dprintf(1, "%d: %s\n", i+1, Bootorder[i]);
         i++;
     } while (f);
-}
-
-// See if 'str' starts with 'glob' - if glob contains an '*' character
-// it will match any number of characters in str that aren't a '/' or
-// the next glob character.
-static char *
-glob_prefix(const char *glob, const char *str)
-{
-    for (;;) {
-        if (!*glob && (!*str || *str == '/'))
-            return (char*)str;
-        if (*glob == '*') {
-            if (!*str || *str == '/' || *str == glob[1])
-                glob++;
-            else
-                str++;
-            continue;
-        }
-        if (*glob != *str)
-            return NULL;
-        glob++;
-        str++;
-    }
 }
 
 // Search the bootorder list for the given glob pattern.
@@ -197,10 +389,8 @@ int bootprio_find_scsi_device(struct pci_device *pci, int target, int lun)
     if (!pci)
         // support only pci machine for now
         return -1;
-    // Find scsi drive - for example: /pci@i0cf8/scsi@5/channel@0/disk@1,0
-    char desc[256], *p;
-    p = build_pci_path(desc, sizeof(desc), "*", pci);
-    snprintf(p, desc+sizeof(desc)-p, "/*@0/*@%x,%x", target, lun);
+    char desc[256];
+    build_scsi_path(desc, sizeof(desc), pci, target, lun);
     return find_prio(desc);
 }
 
@@ -213,10 +403,8 @@ int bootprio_find_ata_device(struct pci_device *pci, int chanid, int slave)
     if (!pci)
         // support only pci machine for now
         return -1;
-    // Find ata drive - for example: /pci@i0cf8/ide@1,1/drive@1/disk@0
-    char desc[256], *p;
-    p = build_pci_path(desc, sizeof(desc), "*", pci);
-    snprintf(p, desc+sizeof(desc)-p, "/drive@%x/disk@%x", chanid, slave);
+    char desc[256];
+    build_ata_path(desc, sizeof(desc), pci, chanid, slave);
     return find_prio(desc);
 }
 
@@ -341,6 +529,7 @@ boot_init(void)
     BootRetryTime = romfile_loadint("etc/boot-fail-wait", 60*1000);
 
     loadBootorder();
+    loadBiosGeometry();
 }
 
 
@@ -496,12 +685,13 @@ get_raw_keystroke(void)
     memset(&br, 0, sizeof(br));
     br.flags = F_IF;
     call16_int(0x16, &br);
-    return br.ah;
+    return br.ax;
 }
 
 // Read a keystroke - waiting up to 'msec' milliseconds.
+// returns both scancode and ascii code.
 int
-get_keystroke(int msec)
+get_keystroke_full(int msec)
 {
     u32 end = irqtimer_calc(msec);
     for (;;) {
@@ -513,6 +703,17 @@ get_keystroke(int msec)
     }
 }
 
+// Read a keystroke - waiting up to 'msec' milliseconds.
+// returns scancode only.
+int
+get_keystroke(int msec)
+{
+    int keystroke = get_keystroke_full(msec);
+
+    if (keystroke < 0)
+        return keystroke;
+    return keystroke >> 8;
+}
 
 /****************************************************************
  * Boot menu and BCV execution
@@ -522,6 +723,14 @@ static int pxen;
 static int menu_key_pressed = 0;
 
 #define DEFAULT_BOOTMENU_WAIT 2500
+
+static const char menuchars[] = {
+    '1', '2', '3', '4', '5', '6', '7', '8', '9',
+    'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i',
+    'j', 'k', 'l', 'm', 'n', 'o', 'p', 'q', 'r',
+    's', /* skip t (tpm menu) */
+    'u', 'v', 'w', 'x', 'y', 'z'
+};
 
 // Show IPL option menu.
 void
@@ -562,16 +771,15 @@ interactive_bootmenu(void)
     // choice = 1 - boot 1st device from list by default
     int maxmenu = 0, choice = 1;
     char find_iPXE[5];
-    struct bootentry_s *pos;
+    struct bootentry_s *pos, *boot = NULL;
 
     // If N key is pressed, do not print boot menu
     // and boot directly from iPXE
     if (n_key) {
         hlist_for_each_entry(pos, &BootList, node) {
-            maxmenu++;
             strtcpy(find_iPXE, pos->description, 5);
             if (strcmp(find_iPXE, "iPXE") == 0)
-                choice = maxmenu;
+                boot = pos;
         }
     }
     // Show menu items if menu-key is pressed
@@ -597,32 +805,43 @@ interactive_bootmenu(void)
         // multiple times and immediately booting the primary boot device.
         int esc_accepted_time = irqtimer_calc(menukey == 1 ? 1500 : 0);
         for (;;) {
-            scan_code = get_keystroke(1000);
-            if (scan_code == 1 && !irqtimer_check(esc_accepted_time))
+            int keystroke = get_keystroke_full(1000);
+            if (keystroke == 0x011b && !irqtimer_check(esc_accepted_time))
                 continue;
-            if (tpm_can_show_menu() && scan_code == 20 /* t */) {
+            if (keystroke < 0) // timeout
+                continue;
+            scan_code = keystroke >> 8;
+            int key_ascii = keystroke & 0xff;
+            if (tpm_can_show_menu() && key_ascii == 't') {
                 printf("\n");
                 tpm_menu();
             }
-            if (scan_code >= 1 && scan_code <= maxmenu+1)
+            if (scan_code == 1) {
+                // ESC
+                printf("\n");
+                return;
+            }
+
+            maxmenu = 0;
+            hlist_for_each_entry(pos, &BootList, node) {
+                if (maxmenu >= ARRAY_SIZE(menuchars))
+                    break;
+                if (key_ascii == menuchars[maxmenu]) {
+                    boot = pos;
+                    break;
+                }
+                maxmenu++;
+            }
+            if (boot)
                 break;
         }
-        printf("\n");
-        if (scan_code == 0x01)
-            // ESC
-            return;
-
-        choice = scan_code - 1;
     }
+    printf("\n");
 
     // Find entry and make top priority.
-    hlist_for_each_entry(pos, &BootList, node) {
-        if (! --choice)
-            break;
-    }
-    hlist_del(&pos->node);
-    pos->priority = 0;
-    hlist_add_head(&pos->node, &BootList);
+    hlist_del(&boot->node);
+    boot->priority = 0;
+    hlist_add_head(&boot->node, &BootList);
 }
 
 // BEV (Boot Execution Vector) list

@@ -1,6 +1,17 @@
 History of SeaBIOS releases. Please see [download](Download) for
 information on obtaining these releases.
 
+SeaBIOS 1.13.0
+==============
+
+Available on 20191209. Major changes in this release:
+
+* Support for reading logical CHS drive information from QEMU
+* Workaround added for misbehaving optionroms that grab "int19"
+* The TPM 2 "PCR bank" option can now be set from the TPM menu
+* SeaVGABIOS support for QEMU "atiext" display
+* Several bug fixes and code cleanups
+
 SeaBIOS 1.12.0
 ==============
 
@@ -11,6 +22,11 @@ Available on 20181117. Major changes in this release:
 * Improved floppy support on real floppy hardware
 * SeaVGABIOS support for QEMU "bochs-display" and QEMU "ramfb" displays
 * Several bug fixes and code cleanups
+
+SeaBIOS 1.12.1
+--------------
+
+Available on 20190314. Stable release containing only bug fixes.
 
 SeaBIOS 1.11.0
 ==============
