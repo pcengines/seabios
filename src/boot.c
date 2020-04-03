@@ -8,6 +8,7 @@
 #include "block.h" // struct drive_s
 #include "bregs.h" // struct bregs
 #include "config.h" // CONFIG_*
+#include "fmap.h"   // fmap_locate_area
 #include "fw/paravirt.h" // qemu_cfg_show_boot_menu
 #include "hw/pci.h" // pci_bdf_to_*
 #include "hw/pcidevice.h" // struct pci_device
@@ -251,9 +252,22 @@ loadBootorder(void)
     if (!CONFIG_BOOTORDER)
         return;
 
+    struct region bootorder_region;
     char *f = romfile_loadfile("bootorder", NULL);
-    if (!f)
-        return;
+
+    if (!f) {
+        if (fmap_locate_area("BOOTORDER", &bootorder_region) == -1)
+            return;
+        else {
+            f = malloc_tmp(bootorder_region.size);
+            if (!f) {
+                warn_noalloc();
+                return;
+            }
+            iomemcpy(f, (void *)bootorder_region.offset, bootorder_region.size);
+        }
+    }
+
 
     int i = 0;
     BootorderCount = 1;
