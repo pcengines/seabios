@@ -362,28 +362,6 @@ int find_com2en(void)
     return -1;
 }
 
-#define FW_PCI_DOMAIN "/pci@i0cf8"
-
-static char *
-build_pci_path(char *buf, int max, const char *devname, struct pci_device *pci)
-{
-    // Build the string path of a bdf - for example: /pci@i0cf8/isa@1,2
-    char *p = buf;
-    if (pci->parent) {
-        p = build_pci_path(p, max, "pci-bridge", pci->parent);
-    } else {
-        p += snprintf(p, buf+max-p, "%s", FW_PCI_DOMAIN);
-        if (pci->rootbus)
-            p += snprintf(p, buf+max-p, ",%x", pci->rootbus);
-    }
-
-    int dev = pci_bdf_to_dev(pci->bdf), fn = pci_bdf_to_fn(pci->bdf);
-    p += snprintf(p, buf+max-p, "/%s@%x", devname, dev);
-    if (fn)
-        p += snprintf(p, buf+max-p, ",%x", fn);
-    return p;
-}
-
 int bootprio_find_pci_device(struct pci_device *pci)
 {
     if (CONFIG_CSM)
@@ -782,8 +760,7 @@ interactive_bootmenu(void)
     while (get_keystroke(0) >= 0)
         ;
 
-    // choice = 1 - boot 1st device from list by default
-    int maxmenu = 0, choice = 1;
+    int maxmenu = 0;
     char find_iPXE[5];
     struct bootentry_s *pos, *boot = NULL;
 
