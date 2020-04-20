@@ -11,23 +11,38 @@
 
 static void* fmap_entry = NULL;
 
-#define ROM_BEGIN       ((void *)0xFF800000)
 #define ROM_END         ((void *)0xFFFFFFFF)
+
+#define CB_TAG_BOOT_MEDIA_PARAMS 0x0030
+
+struct cb_boot_media_params {
+	u32 tag;
+	u32 size;
+	/* offsets are relative to start of boot media */
+	u64 fmap_offset;
+	u64 cbfs_offset;
+	u64 cbfs_size;
+	u64 boot_media_size;
+};
 
 void find_fmap_directory(void)
 {
-    void *offset = ROM_BEGIN;
+    struct cb_boot_media_params *cbbmp;
+    
+    cbbmp = find_cb_subtable(cbh, CB_TAG_BOOT_MEDIA_PARAMS);
 
-    while (offset <= ROM_END) {
-        if (!memcmp(offset, FMAP_SIGNATURE, 8)) {
-                fmap_entry = offset;
-                dprintf(1, "FMAP found @ %p\n", fmap_entry);
-                return;
-            }
-        /* Currently FMAP signature is assumed to be 0x100 bytes aligned */
-        offset += 0x100;
+    if (!cbbmp) {
+        dprintf(1, "Boot Media Params not found\n");
+        return;
     }
-    dprintf(1, "FMAP not found\n");
+
+    if (cbbmp->fmap_offset != 0 && cbbmp->boot_media_size != 0) {
+        fmap_entry  = (void *)(ROM_END - cbbmp->boot_media_size + 1);
+        fmap_entry += (void *)cbbmp->fmap_offset;
+        dprintf(1, "FMAP found @ %p\n", fmap_entry);
+    } else {
+        dprintf(1, "FMAP not found\n");
+    }
 }
 
 int fmap_locate_area(const char *name, struct region *ar)

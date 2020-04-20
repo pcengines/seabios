@@ -10,13 +10,13 @@
 #define FMAP_SIGNATURE		"__FMAP__"
 #define FMAP_VER_MAJOR		1	/* this header's FMAP minor version */
 #define FMAP_VER_MINOR		1	/* this header's FMAP minor version */
-#define FMAP_STRLEN		32	/* maximum length for strings, */
+#define FMAP_STRLEN			32	/* maximum length for strings, */
 					/* including null-terminator */
 
 enum fmap_flags {
     FMAP_AREA_STATIC		= 1 << 0,
     FMAP_AREA_COMPRESSED	= 1 << 1,
-    FMAP_AREA_RO		= 1 << 2,
+    FMAP_AREA_RO			= 1 << 2,
     FMAP_AREA_PRESERVE		= 1 << 3,
 };
 

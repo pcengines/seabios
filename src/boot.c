@@ -9,6 +9,7 @@
 #include "bregs.h" // struct bregs
 #include "config.h" // CONFIG_*
 #include "fmap.h"   // fmap_locate_area
+#include "fw/vpd.h" // qemu_cfg_show_boot_menu
 #include "fw/paravirt.h" // qemu_cfg_show_boot_menu
 #include "hw/pci.h" // pci_bdf_to_*
 #include "hw/pcidevice.h" // struct pci_device
@@ -254,7 +255,6 @@ loadBootorder(void)
 
     struct region bootorder_region;
     char *f = romfile_loadfile("bootorder", NULL);
-
     if (!f) {
         if (fmap_locate_area("BOOTORDER", &bootorder_region) == -1)
             return;
@@ -267,7 +267,6 @@ loadBootorder(void)
             iomemcpy(f, (void *)bootorder_region.offset, bootorder_region.size);
         }
     }
-
 
     int i = 0;
     BootorderCount = 1;
@@ -297,6 +296,32 @@ loadBootorder(void)
     } while (f);
 }
 
+static u8 is_tag_enabled(const char *name, u8 dflt)
+{
+	int tag_size = 10;
+	char vpd_tag[tag_size];
+
+    /* Check if key is present in RW and has correct value */
+    if (vpd_gets(name, vpd_tag, tag_size, VPD_RW)){
+        if (!memcmp(vpd_tag, "enabled", strlen("enabled")))
+            return 1;
+        else if (!memcmp(vpd_tag, "disabled", strlen("disabled")))
+            return 0;
+    }
+
+    /* Key is not present in RW or has incorrect value, check RO */
+    if (vpd_gets(name, vpd_tag, tag_size, VPD_RO)){
+        if (!memcmp(vpd_tag, "enabled", strlen("enabled")))
+            return 1;
+        else if (!memcmp(vpd_tag, "disabled", strlen("disabled")))
+            return 0;
+    }
+
+    /* Key is not present in RW neither RO or has incorrect values,
+        take default*/
+    return dflt;
+}
+
 // Search the bootorder list for the given glob pattern.
 static int
 find_prio(const char *glob)
@@ -309,57 +334,26 @@ find_prio(const char *glob)
     return -1;
 }
 
-// search for 'ipxe enable' bit value
-int find_pxen(void)
-{
-    int i = 0;
-    for (i=0; i < BootorderCount; i++)
-    {
-        if (glob_prefix("pxen0", Bootorder[i]))
-            return 0;
-        if (glob_prefix("pxen1", Bootorder[i]))
-            return 1;
-    }
-    return -1;
-}
-
 // search for 'boot from usb' bit value
 // if it doesn't exist - set to enabled
 int find_usben(void)
 {
-     int i;
-     for (i=0; i < BootorderCount; i++)
-     {
-         if (glob_prefix("usben0", Bootorder[i]))
-             return 0;
-     }
-     return 1;
+    return is_tag_enabled("usben", 1);
 }
 
 int find_scon(void)
 {
-    int i = 0;
-    for (i=0; i < BootorderCount; i++)
-    {
-        if (glob_prefix("scon0", Bootorder[i]))
-            return 0;
-        if (glob_prefix("scon1", Bootorder[i]))
-            return 1;
-    }
-    return -1;
+    return is_tag_enabled("scon", 1);
 }
 
 int find_com2en(void)
 {
-    int i = 0;
-    for (i=0; i < BootorderCount; i++)
-    {
-        if (glob_prefix("com2en0", Bootorder[i]))
-            return 0;
-        if (glob_prefix("com2en1", Bootorder[i]))
-            return 1;
-    }
-    return -1;
+    return is_tag_enabled("com2en", 0);
+}
+
+int find_pxen(void)
+{
+    return is_tag_enabled("pxen", 0);
 }
 
 int bootprio_find_pci_device(struct pci_device *pci)
