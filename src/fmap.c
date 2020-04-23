@@ -7,25 +7,40 @@
 #include "malloc.h" // malloc
 #include "string.h" // memcpy
 #include "output.h" // dprintf
+#include "util.h"   // find_cb_subtable
 #include "fmap.h"   // find_fmap_directory
 
 static void* fmap_entry = NULL;
+static void* rom_begin = NULL;
 
 #define ROM_BEGIN       ((void *)0xFF800000)
 #define ROM_END         ((void *)0xFFFFFFFF)
 
 void find_fmap_directory(void)
 {
-    void *offset = ROM_BEGIN;
+    struct cb_boot_media_params *cbbmp;
 
-    while (offset <= ROM_END) {
-        if (!memcmp(offset, FMAP_SIGNATURE, 8)) {
-                fmap_entry = offset;
-                dprintf(1, "FMAP found @ %p\n", fmap_entry);
-                return;
-            }
-        /* Currently FMAP signature is assumed to be 0x100 bytes aligned */
-        offset += 0x100;
+    // Find coreboot table.
+    struct cb_header *cbh = find_cb_table();
+
+    if (!cbh) {
+        dprintf(1, "coreboot table not found\n");
+        return;
+    }
+
+    cbbmp = find_cb_subtable(cbh, CB_TAG_BOOT_MEDIA_PARAMS);
+
+    if (!cbbmp) {
+        dprintf(1, "Boot Media Params not found\n");
+        return;
+    }
+
+    if (cbbmp->fmap_offset != 0 && cbbmp->boot_media_size != 0) {
+        rom_begin = (void *)(ROM_END - cbbmp->boot_media_size + 1);
+        fmap_entry = (void *)((u32)rom_begin + (u32)cbbmp->fmap_offset);
+        dprintf(1, "FMAP found @ %p\n", fmap_entry);
+    } else {
+        dprintf(1, "FMAP not found\n");
     }
     dprintf(1, "FMAP not found\n");
 }
@@ -34,7 +49,7 @@ int fmap_locate_area(const char *name, struct region *ar)
 {
     size_t offset;
 
-    if (!fmap_entry)
+    if (!fmap_entry || !rom_begin)
         return -1;
 
     /* Start reading the areas just after fmap header. */
@@ -57,7 +72,7 @@ int fmap_locate_area(const char *name, struct region *ar)
         dprintf(1, "FMAP: area %s found @ %p (%d bytes)\n",
                 name, (void *) area->offset, area->size);
 
-        ar->offset = (u32)ROM_BEGIN + area->offset;
+        ar->offset = (u32)rom_begin + area->offset;
         ar->size = area->size;
         free(area);
         return 0;
