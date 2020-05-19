@@ -743,15 +743,16 @@ void
 interactive_bootmenu(void)
 {
     // XXX - show available drives?
+    u64 show_boot_menu = romfile_loadint("etc/show-boot-menu", 1);
 
     int n_key = 0;
     pxen = find_pxen();
 
-    if (! CONFIG_BOOTMENU || !romfile_loadint("etc/show-boot-menu", 1))
+    if (! CONFIG_BOOTMENU || show_boot_menu != 0)
         return;
 
     // skip menu if only one boot device and no TPM
-    if ((NULL == BootList.first->next) && !tpm_can_show_menu()) {
+    if ((show_boot_menu == 2) && (NULL == BootList.first->next) && !tpm_can_show_menu()) {
        printf("\n");
        return;
     }
