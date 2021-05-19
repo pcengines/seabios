@@ -13,8 +13,19 @@
 static void* fmap_entry = NULL;
 static void* rom_begin = NULL;
 
-#define ROM_BEGIN       ((void *)0xFF800000)
 #define ROM_END         ((void *)0xFFFFFFFF)
+
+#define CB_TAG_BOOT_MEDIA_PARAMS 0x0030
+
+struct cb_boot_media_params {
+	u32 tag;
+	u32 size;
+	/* offsets are relative to start of boot media */
+	u64 fmap_offset;
+	u64 cbfs_offset;
+	u64 cbfs_size;
+	u64 boot_media_size;
+};
 
 void find_fmap_directory(void)
 {
@@ -42,7 +53,6 @@ void find_fmap_directory(void)
     } else {
         dprintf(1, "FMAP not found\n");
     }
-    dprintf(1, "FMAP not found\n");
 }
 
 int fmap_locate_area(const char *name, struct region *ar)
