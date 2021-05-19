@@ -299,8 +299,9 @@ loadBootorder(void)
 
 static u8 is_tag_enabled(const char *name, u8 dflt)
 {
-	int tag_size = 10;
+	int tag_size = 20;
 	char vpd_tag[tag_size];
+    size_t len = strlen(name);
 
     /* Check if key is present in RW and has correct value */
     if (vpd_gets(name, vpd_tag, tag_size, VPD_RW)){
@@ -319,7 +320,20 @@ static u8 is_tag_enabled(const char *name, u8 dflt)
     }
 
     /* Key is not present in RW neither RO or has incorrect values,
-        take default*/
+       take default, try from romfile */
+    strtcpy(vpd_tag, name, len);
+
+    int i = 0;
+    for (i = 0; i < BootorderCount; i++) {
+        vpd_tag[len] = '0';
+        vpd_tag[len + 1] = '\0';
+        if (glob_prefix(vpd_tag, Bootorder[i]))
+                return 0;
+        vpd_tag[len] = '1';
+        if (glob_prefix(vpd_tag, Bootorder[i]))
+                return 1;
+    }
+
     return dflt;
 }
 
