@@ -25,6 +25,8 @@
 #define MAX_INPUT 60
 #define ENTER_KEY 28
 
+struct cbmem_vpd *vpd;
+
 struct cbmem_vpd {
     u32 magic;
     u32 version;
@@ -79,6 +81,7 @@ static struct cbmem_vpd* find_vpd(void)
         dprintf(1, "VPD uninitialized or empty\n");
         return NULL;
     }
+    vpd = cb_vpd;
 
     return cb_vpd;
 }
@@ -104,11 +107,11 @@ const void *vpd_find_key(const char *key, int *size, enum vpd_region region)
 {
     struct vpd_gets_arg arg = {0};
     int consumed = 0;
-    const struct cbmem_vpd *vpd;
 
-    vpd = find_vpd();
-    if (!vpd)
-        return NULL;
+    if (!vpd) {
+        if (!find_vpd())
+            return NULL;
+    }
 
     arg.key = (const u8 *)key;
     arg.key_len = strlen(key);
