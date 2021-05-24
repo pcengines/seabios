@@ -778,8 +778,6 @@ interactive_bootmenu(void)
     if (! CONFIG_BOOTMENU)
         return;
 
-    int n_key = 0;
-    pxen = find_pxen();
     int show_boot_menu = romfile_loadint("etc/show-boot-menu", 1);
     if (!show_boot_menu)
         return;
