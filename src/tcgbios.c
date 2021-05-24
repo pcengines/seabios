@@ -1959,6 +1959,9 @@ tpm20_clear(void)
     dprintf(DEBUG_tcg, "TCGBIOS: Return value from sending TPM2_CC_Clear = 0x%08x\n",
             ret);
 
+    if (ret == 0)
+        printf("TPM2.0 clear success.\n");
+
     return ret;
 }
 
