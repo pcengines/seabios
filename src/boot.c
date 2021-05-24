@@ -321,8 +321,7 @@ static u8 is_tag_enabled(const char *name, u8 dflt)
 
     /* Key is not present in RW neither RO or has incorrect values,
        take default, try from romfile */
-    strtcpy(vpd_tag, name, len);
-
+    strtcpy(vpd_tag, name, len + 1);
     int i = 0;
     for (i = 0; i < BootorderCount; i++) {
         vpd_tag[len] = '0';
