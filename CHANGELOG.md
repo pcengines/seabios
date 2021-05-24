@@ -4,6 +4,16 @@ Change log for PC Engines fork of SeaBIOS
 Fourth digit in release number means PC Engines patch.
 
 ## [Unreleased]
+## [rel-1.14.0.1] - 2021-05-24
+### Changed
+- rebased on SeaBIOS official repository commit b0d61ec
+
+### Added
+- coreboot flashmap (FMAP) driver
+- coreboot VPD driver for runtime configuration
+- support for persistent bootorder in FMAP region
+- TPM success status reporting after TPM Clear operation
+
 ## [rel-1.12.1.3] - 2019-07-05
 ### Fixed
 - some corner cases for boot fallback functionality:
