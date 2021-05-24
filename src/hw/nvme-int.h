@@ -10,6 +10,8 @@
 #include "types.h" // u32
 #include "pcidevice.h" // struct pci_device
 
+#define NVME_MAX_PRPL_ENTRIES 15 /* Allows requests up to 64kb */
+
 /* Data structures */
 
 /* The register file of a NVMe host controller. This struct follows the naming
@@ -117,9 +119,15 @@ struct nvme_namespace {
 
     u32 block_size;
     u32 metadata_size;
+    u32 max_req_size;
 
     /* Page aligned buffer of size NVME_PAGE_SIZE. */
     char *dma_buffer;
+
+    /* Page List */
+    u32 prpl_len;
+    void *prp1;
+    u64 prpl[NVME_MAX_PRPL_ENTRIES];
 };
 
 /* Data structures for NVMe admin identify commands */
@@ -131,7 +139,12 @@ struct nvme_identify_ctrl {
     char mn[40];
     char fr[8];
 
-    char _boring[516 - 72];
+    u8 rab;
+    u8 ieee[3];
+    u8 cmic;
+    u8 mdts;
+
+    char _boring[516 - 78];
 
     u32 nn;                     /* number of namespaces */
 };
@@ -189,6 +202,7 @@ union nvme_identify {
 #define NVME_CQE_DW3_P (1U << 16)
 
 #define NVME_PAGE_SIZE 4096
+#define NVME_PAGE_MASK ~(NVME_PAGE_SIZE - 1)
 
 /* Length for the queue entries. */
 #define NVME_SQE_SIZE_LOG 6

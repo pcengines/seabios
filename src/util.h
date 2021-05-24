@@ -27,16 +27,30 @@ void boot_add_cd(struct drive_s *drive_g, const char *desc, int prio);
 void boot_add_cbfs(void *data, const char *desc, int prio);
 void interactive_bootmenu(void);
 void bcv_prepboot(void);
+u8 is_bootprio_strict(void);
 struct pci_device;
 int bootprio_find_pci_device(struct pci_device *pci);
+int bootprio_find_mmio_device(void *mmio);
 int bootprio_find_scsi_device(struct pci_device *pci, int target, int lun);
+int bootprio_find_scsi_mmio_device(void *mmio, int target, int lun);
 int bootprio_find_ata_device(struct pci_device *pci, int chanid, int slave);
 int bootprio_find_fdc_device(struct pci_device *pci, int port, int fdid);
 int bootprio_find_pci_rom(struct pci_device *pci, int instance);
 int bootprio_find_named_rom(const char *name, int instance);
 struct usbdevice_s;
 int bootprio_find_usb(struct usbdevice_s *usbdev, int lun);
+int get_keystroke_full(int msec);
 int get_keystroke(int msec);
+int find_pxen(void);
+int find_usben(void);
+int find_scon(void);
+int find_com2en(void);
+struct chs_s;
+int boot_lchs_find_pci_device(struct pci_device *pci, struct chs_s *chs);
+int boot_lchs_find_scsi_device(struct pci_device *pci, int target, int lun,
+                               struct chs_s *chs);
+int boot_lchs_find_ata_device(struct pci_device *pci, int chanid, int slave,
+                              struct chs_s *chs);
 int find_pxen(void);
 int find_usben(void);
 int find_scon(void);
@@ -87,6 +101,17 @@ void copy_smbios(void *pos);
 void display_uuid(void);
 void copy_table(void *pos);
 void smbios_setup(void);
+
+// fw/dsdt_parser.c
+struct acpi_device;
+void acpi_dsdt_parse(void);
+struct acpi_device *acpi_dsdt_find_string(struct acpi_device *prev, const char *hid);
+struct acpi_device *acpi_dsdt_find_eisaid(struct acpi_device *prev, u16 eisaid);
+char *acpi_dsdt_name(struct acpi_device *dev);
+int acpi_dsdt_present_eisaid(u16 eisaid);
+int acpi_dsdt_find_io(struct acpi_device *dev, u64 *min, u64 *max);
+int acpi_dsdt_find_mem(struct acpi_device *dev, u64 *min, u64 *max);
+int acpi_dsdt_find_irq(struct acpi_device *dev, u64 *irq);
 
 // fw/coreboot.c
 extern const char *CBvendor, *CBpart;
@@ -167,6 +192,7 @@ void sdcard_setup(void);
 // hw/timer.c
 void timer_setup(void);
 void pmtimer_setup(u16 ioport);
+void tsctimer_setfreq(u32 khz, const char *src);
 u32 timer_calc(u32 msecs);
 u32 timer_calc_usec(u32 usecs);
 int timer_check(u32 end);

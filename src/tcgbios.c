@@ -156,9 +156,10 @@ static struct tpml_pcr_selection *tpm20_pcr_selection;
 struct tpm_log_entry {
     struct tpm_log_header hdr;
     u8 pad[sizeof(struct tpm2_digest_values)
-           + 5 * sizeof(struct tpm2_digest_value)
+           + 8 * sizeof(struct tpm2_digest_value)
            + SHA1_BUFSIZE + SHA256_BUFSIZE + SHA384_BUFSIZE
-           + SHA512_BUFSIZE + SM3_256_BUFSIZE];
+           + SHA512_BUFSIZE + SM3_256_BUFSIZE + SHA3_256_BUFSIZE
+           + SHA3_384_BUFSIZE + SHA3_512_BUFSIZE];
 } PACKED;
 
 static const struct hash_parameters {
@@ -192,6 +193,21 @@ static const struct hash_parameters {
         .hashalg_flag = TPM2_ALG_SM3_256_FLAG,
         .hash_buffersize = SM3_256_BUFSIZE,
         .name = "SM3-256",
+    }, {
+        .hashalg = TPM2_ALG_SHA3_256,
+        .hashalg_flag = TPM2_ALG_SHA3_256_FLAG,
+        .hash_buffersize = SHA3_256_BUFSIZE,
+        .name = "SHA3-256",
+    }, {
+        .hashalg = TPM2_ALG_SHA3_384,
+        .hashalg_flag = TPM2_ALG_SHA3_384_FLAG,
+        .hash_buffersize = SHA3_384_BUFSIZE,
+        .name = "SHA3-384",
+    }, {
+        .hashalg = TPM2_ALG_SHA3_512,
+        .hashalg_flag = TPM2_ALG_SHA3_512_FLAG,
+        .hash_buffersize = SHA3_512_BUFSIZE,
+        .name = "SHA3-512",
     }
 };
 
@@ -252,7 +268,7 @@ tpm20_write_EfiSpecIdEventStruct(void)
 
     struct {
         struct TCG_EfiSpecIdEventStruct hdr;
-        u8 pad[256];
+        u8 pad[sizeof(struct tpm_log_entry) + sizeof(u8)];
     } event = {
         .hdr.signature = "Spec ID Event03",
         .hdr.platformClass = TPM_TCPA_ACPI_CLASS_CLIENT,
@@ -265,13 +281,18 @@ tpm20_write_EfiSpecIdEventStruct(void)
     struct tpms_pcr_selection *sel = tpm20_pcr_selection->selections;
     void *nsel, *end = (void*)tpm20_pcr_selection + tpm20_pcr_selection_size;
 
-    u32 count;
+    u32 count, numAlgs = 0;
     for (count = 0; count < be32_to_cpu(tpm20_pcr_selection->count); count++) {
         u8 sizeOfSelect = sel->sizeOfSelect;
 
         nsel = (void*)sel + sizeof(*sel) + sizeOfSelect;
         if (nsel > end)
             break;
+
+        if (!sizeOfSelect || sel->pcrSelect[0] == 0) {
+            sel = nsel;
+            continue;
+        }
 
         int hsize = tpm20_get_hash_buffersize(be16_to_cpu(sel->hashAlg));
         if (hsize < 0) {
@@ -282,13 +303,14 @@ tpm20_write_EfiSpecIdEventStruct(void)
 
         int event_size = offsetof(struct TCG_EfiSpecIdEventStruct
                                   , digestSizes[count+1]);
-        if (event_size > sizeof(event) - sizeof(u32)) {
+        if (event_size > sizeof(event) - sizeof(u8)) {
             dprintf(DEBUG_tcg, "EfiSpecIdEventStruct pad too small\n");
             return -1;
         }
 
-        event.hdr.digestSizes[count].algorithmId = be16_to_cpu(sel->hashAlg);
-        event.hdr.digestSizes[count].digestSize = hsize;
+        event.hdr.digestSizes[numAlgs].algorithmId = be16_to_cpu(sel->hashAlg);
+        event.hdr.digestSizes[numAlgs].digestSize = hsize;
+        numAlgs++;
 
         sel = nsel;
     }
@@ -298,10 +320,10 @@ tpm20_write_EfiSpecIdEventStruct(void)
         return -1;
     }
 
-    event.hdr.numberOfAlgorithms = count;
+    event.hdr.numberOfAlgorithms = numAlgs;
     int event_size = offsetof(struct TCG_EfiSpecIdEventStruct
-                              , digestSizes[count]);
-    u32 *vendorInfoSize = (void*)&event + event_size;
+                              , digestSizes[numAlgs]);
+    u8 *vendorInfoSize = (void*)&event + event_size;
     *vendorInfoSize = 0;
     event_size += sizeof(*vendorInfoSize);
 
@@ -336,13 +358,19 @@ tpm20_build_digest(struct tpm_log_entry *le, const u8 *sha1, int bigEndian)
     void *nsel, *end = (void*)tpm20_pcr_selection + tpm20_pcr_selection_size;
     void *dest = le->hdr.digest + sizeof(struct tpm2_digest_values);
 
-    u32 count;
+    u32 count, numAlgs = 0;
     for (count = 0; count < be32_to_cpu(tpm20_pcr_selection->count); count++) {
         u8 sizeOfSelect = sel->sizeOfSelect;
 
         nsel = (void*)sel + sizeof(*sel) + sizeOfSelect;
         if (nsel > end)
             break;
+
+        /* PCR 0-7 unused? -- skip */
+        if (!sizeOfSelect || sel->pcrSelect[0] == 0) {
+            sel = nsel;
+            continue;
+        }
 
         int hsize = tpm20_get_hash_buffersize(be16_to_cpu(sel->hashAlg));
         if (hsize < 0) {
@@ -368,6 +396,8 @@ tpm20_build_digest(struct tpm_log_entry *le, const u8 *sha1, int bigEndian)
 
         dest += sizeof(*v) + hsize;
         sel = nsel;
+
+        numAlgs++;
     }
 
     if (sel != end) {
@@ -377,9 +407,9 @@ tpm20_build_digest(struct tpm_log_entry *le, const u8 *sha1, int bigEndian)
 
     struct tpm2_digest_values *v = (void*)le->hdr.digest;
     if (bigEndian)
-        v->count = cpu_to_be32(count);
+        v->count = cpu_to_be32(numAlgs);
     else
-        v->count = count;
+        v->count = numAlgs;
 
     return dest - (void*)le->hdr.digest;
 }
@@ -481,8 +511,17 @@ tpm20_get_pcrbanks(void)
     if (ret)
         return ret;
 
-    u32 size = be32_to_cpu(trg->hdr.totlen) -
-                           offsetof(struct tpm2_res_getcapability, data);
+    /* defend against (broken) TPM sending packets that are too short */
+    u32 resplen = be32_to_cpu(trg->hdr.totlen);
+    if (resplen <= offsetof(struct tpm2_res_getcapability, data))
+        return -1;
+
+    u32 size = resplen - offsetof(struct tpm2_res_getcapability, data);
+    /* we need a valid tpml_pcr_selection up to and including sizeOfSelect */
+    if (size < offsetof(struct tpml_pcr_selection, selections) +
+               offsetof(struct tpms_pcr_selection, pcrSelect))
+        return -1;
+
     tpm20_pcr_selection = malloc_high(size);
     if (tpm20_pcr_selection) {
         memcpy(tpm20_pcr_selection, &trg->data, size);
@@ -1919,6 +1958,9 @@ tpm20_clear(void)
 
     dprintf(DEBUG_tcg, "TCGBIOS: Return value from sending TPM2_CC_Clear = 0x%08x\n",
             ret);
+
+    if (ret == 0)
+        printf("TPM2.0 clear success.\n");
 
     return ret;
 }

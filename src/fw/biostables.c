@@ -141,18 +141,38 @@ find_acpi_table(u32 signature)
     if (!RsdpAddr || RsdpAddr->signature != RSDP_SIGNATURE)
         return NULL;
     struct rsdt_descriptor_rev1 *rsdt = (void*)RsdpAddr->rsdt_physical_address;
+    struct xsdt_descriptor_rev2 *xsdt =
+        RsdpAddr->xsdt_physical_address >= 0x100000000
+        ? NULL : (void*)(u32)(RsdpAddr->xsdt_physical_address);
     dprintf(4, "rsdt=%p\n", rsdt);
-    if (!rsdt || rsdt->signature != RSDT_SIGNATURE)
-        return NULL;
-    void *end = (void*)rsdt + rsdt->length;
-    int i;
-    for (i=0; (void*)&rsdt->table_offset_entry[i] < end; i++) {
-        struct acpi_table_header *tbl = (void*)rsdt->table_offset_entry[i];
-        if (!tbl || tbl->signature != signature)
-            continue;
-        dprintf(4, "table(%x)=%p\n", signature, tbl);
-        return tbl;
+    dprintf(4, "xsdt=%p\n", xsdt);
+
+    if (xsdt && xsdt->signature == XSDT_SIGNATURE) {
+        void *end = (void*)xsdt + xsdt->length;
+        int i;
+        for (i=0; (void*)&xsdt->table_offset_entry[i] < end; i++) {
+            if (xsdt->table_offset_entry[i] >= 0x100000000)
+                continue; /* above 4G */
+            struct acpi_table_header *tbl = (void*)(u32)xsdt->table_offset_entry[i];
+            if (!tbl || tbl->signature != signature)
+                continue;
+            dprintf(1, "table(%x)=%p (via xsdt)\n", signature, tbl);
+            return tbl;
+        }
     }
+
+    if (rsdt && rsdt->signature == RSDT_SIGNATURE) {
+        void *end = (void*)rsdt + rsdt->length;
+        int i;
+        for (i=0; (void*)&rsdt->table_offset_entry[i] < end; i++) {
+            struct acpi_table_header *tbl = (void*)rsdt->table_offset_entry[i];
+            if (!tbl || tbl->signature != signature)
+                continue;
+            dprintf(1, "table(%x)=%p (via rsdt)\n", signature, tbl);
+            return tbl;
+        }
+    }
+
     dprintf(4, "no table %x found\n", signature);
     return NULL;
 }
@@ -236,6 +256,7 @@ find_acpi_features(void)
         void *p = fadt;
         acpi_set_reset_reg(p + 116, *(u8 *)(p + 128));
     }
+    acpi_dsdt_parse();
 }
 
 
@@ -441,10 +462,16 @@ smbios_romfile_setup(void)
         /* common case: add our own type 0, with 3 strings and 4 '\0's */
         u16 t0_len = sizeof(struct smbios_type_0) + strlen(BIOS_NAME) +
                      strlen(VERSION) + strlen(BIOS_DATE) + 4;
-        ep.structure_table_length += t0_len;
-        if (t0_len > ep.max_structure_size)
-            ep.max_structure_size = t0_len;
-        ep.number_of_structures++;
+        if (t0_len > (0xffff - ep.structure_table_length)) {
+            dprintf(1, "Insufficient space (%d bytes) to add SMBIOS type 0 table (%d bytes)\n",
+                    0xffff - ep.structure_table_length, t0_len);
+            need_t0 = 0;
+        } else {
+            ep.structure_table_length += t0_len;
+            if (t0_len > ep.max_structure_size)
+                ep.max_structure_size = t0_len;
+            ep.number_of_structures++;
+        }
     }
 
     /* allocate final blob and record its address in the entry point */

@@ -101,8 +101,10 @@ tsctimer_setup(void)
 void
 timer_setup(void)
 {
-    if (!CONFIG_TSC_TIMER || (CONFIG_PMTIMER && TimerPort != PORT_PIT_COUNTER0))
+    if (!CONFIG_TSC_TIMER)
         return;
+    if (TimerPort != PORT_PIT_COUNTER0)
+        return; // have timer already
 
     // Check if CPU has a timestamp counter
     u32 eax, ebx, ecx, edx, cpuid_features = 0;
@@ -114,10 +116,32 @@ timer_setup(void)
 }
 
 void
+tsctimer_setfreq(u32 khz, const char *src)
+{
+    if (!CONFIG_TSC_TIMER)
+        return;
+    if (TimerPort != PORT_PIT_COUNTER0)
+        return; // have timer already
+
+    TimerKHz = khz;
+    ShiftTSC = 0;
+    while (TimerKHz >= 6000) {
+        ShiftTSC++;
+        TimerKHz = (TimerKHz + 1) >> 1;
+    }
+    TimerPort = 0;
+
+    dprintf(1, "CPU Mhz=%u (%s)\n", (TimerKHz << ShiftTSC) / 1000, src);
+}
+
+void
 pmtimer_setup(u16 ioport)
 {
     if (!CONFIG_PMTIMER)
         return;
+    if (TimerPort != PORT_PIT_COUNTER0)
+        return; // have timer already
+
     dprintf(1, "Using pmtimer, ioport 0x%x\n", ioport);
     TimerPort = ioport;
     TimerKHz = DIV_ROUND_UP(PMTIMER_HZ, 1000);
@@ -156,7 +180,7 @@ timer_read(void)
     // Read from PIT.
     outb(PM_SEL_READBACK | PM_READ_VALUE | PM_READ_COUNTER0, PORT_PIT_MODE);
     u16 v = inb(PORT_PIT_COUNTER0) | (inb(PORT_PIT_COUNTER0) << 8);
-    return timer_adjust_bits(v, 0xffff);
+    return timer_adjust_bits(-v, 0xffff);
 }
 
 // Return the TSC value that is 'msecs' time in the future.

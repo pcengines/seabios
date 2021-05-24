@@ -152,7 +152,7 @@ nvme_wait(struct nvme_sq *sq)
 /* Returns the next submission queue entry (or NULL if the queue is full). It
    also fills out Command Dword 0 and clears the rest. */
 static struct nvme_sqe *
-nvme_get_next_sqe(struct nvme_sq *sq, u8 opc, void *metadata, void *data)
+nvme_get_next_sqe(struct nvme_sq *sq, u8 opc, void *metadata, void *data, void *data2)
 {
     if (((sq->head + 1) & sq->common.mask) == sq->tail) {
         dprintf(3, "submission queue is full");
@@ -166,11 +166,7 @@ nvme_get_next_sqe(struct nvme_sq *sq, u8 opc, void *metadata, void *data)
     sqe->cdw0 = opc | (sq->tail << 16 /* CID */);
     sqe->mptr = (u32)metadata;
     sqe->dptr_prp1 = (u32)data;
-
-    if (sqe->dptr_prp1 & (NVME_PAGE_SIZE - 1)) {
-        /* Data buffer not page aligned. */
-        warn_internalerror();
-    }
+    sqe->dptr_prp2 = (u32)data2;
 
     return sqe;
 }
@@ -200,7 +196,7 @@ nvme_admin_identify(struct nvme_ctrl *ctrl, u8 cns, u32 nsid)
     struct nvme_sqe *cmd_identify;
     cmd_identify = nvme_get_next_sqe(&ctrl->admin_sq,
                                      NVME_SQE_OPC_ADMIN_IDENTIFY, NULL,
-                                     identify_buf);
+                                     identify_buf, NULL);
 
     if (!cmd_identify) {
         warn_internalerror();
@@ -238,7 +234,8 @@ nvme_admin_identify_ns(struct nvme_ctrl *ctrl, u32 ns_id)
 }
 
 static void
-nvme_probe_ns(struct nvme_ctrl *ctrl, struct nvme_namespace *ns, u32 ns_id)
+nvme_probe_ns(struct nvme_ctrl *ctrl, struct nvme_namespace *ns, u32 ns_id,
+              u8 mdts)
 {
     ns->ctrl  = ctrl;
     ns->ns_id = ns_id;
@@ -280,6 +277,14 @@ nvme_probe_ns(struct nvme_ctrl *ctrl, struct nvme_namespace *ns, u32 ns_id)
     ns->drive.type      = DTYPE_NVME;
     ns->drive.blksize   = ns->block_size;
     ns->drive.sectors   = ns->lba_count;
+
+    if (mdts) {
+        ns->max_req_size = ((1U << mdts) * NVME_PAGE_SIZE) / ns->block_size;
+        dprintf(3, "NVME NS %u max request size: %d sectors\n",
+                ns_id, ns->max_req_size);
+    } else {
+        ns->max_req_size = -1U;
+    }
 
     ns->dma_buffer = zalloc_page_aligned(&ZoneHigh, NVME_PAGE_SIZE);
 
@@ -329,7 +334,7 @@ nvme_create_io_cq(struct nvme_ctrl *ctrl, struct nvme_cq *cq, u16 q_idx)
 
     cmd_create_cq = nvme_get_next_sqe(&ctrl->admin_sq,
                                       NVME_SQE_OPC_ADMIN_CREATE_IO_CQ, NULL,
-                                      cq->cqe);
+                                      cq->cqe, NULL);
     if (!cmd_create_cq) {
         goto err_destroy_cq;
     }
@@ -373,7 +378,7 @@ nvme_create_io_sq(struct nvme_ctrl *ctrl, struct nvme_sq *sq, u16 q_idx, struct 
 
     cmd_create_sq = nvme_get_next_sqe(&ctrl->admin_sq,
                                       NVME_SQE_OPC_ADMIN_CREATE_IO_SQ, NULL,
-                                      sq->sqe);
+                                      sq->sqe, NULL);
     if (!cmd_create_sq) {
         goto err_destroy_sq;
     }
@@ -408,19 +413,29 @@ nvme_io_readwrite(struct nvme_namespace *ns, u64 lba, char *buf, u16 count,
                   int write)
 {
     u32 buf_addr = (u32)buf;
+    void *prp2;
 
-    if ((buf_addr & 0x3) ||
-        ((buf_addr & ~(NVME_PAGE_SIZE - 1)) !=
-         ((buf_addr + ns->block_size * count - 1) & ~(NVME_PAGE_SIZE - 1)))) {
-        /* Buffer is misaligned or crosses page boundary */
+    if (buf_addr & 0x3) {
+        /* Buffer is misaligned */
         warn_internalerror();
         return DISK_RET_EBADTRACK;
+    }
+
+    if ((ns->block_size * count) > (NVME_PAGE_SIZE * 2)) {
+        /* We need to describe more than 2 pages, rely on PRP List */
+        prp2 = ns->prpl;
+    } else if ((ns->block_size * count) > NVME_PAGE_SIZE) {
+        /* Directly embed the 2nd page if we only need 2 pages */
+        prp2 = (void *)(long)ns->prpl[0];
+    } else {
+        /* One page is enough, don't expose anything else */
+        prp2 = NULL;
     }
 
     struct nvme_sqe *io_read = nvme_get_next_sqe(&ns->ctrl->io_sq,
                                                  write ? NVME_SQE_OPC_IO_WRITE
                                                        : NVME_SQE_OPC_IO_READ,
-                                                 NULL, buf);
+                                                 NULL, buf, prp2);
     io_read->nsid = ns->ns_id;
     io_read->dword[10] = (u32)lba;
     io_read->dword[11] = (u32)(lba >> 32);
@@ -438,6 +453,61 @@ nvme_io_readwrite(struct nvme_namespace *ns, u64 lba, char *buf, u16 count,
     }
 
     return DISK_RET_SUCCESS;
+}
+
+static void nvme_reset_prpl(struct nvme_namespace *ns)
+{
+    ns->prpl_len = 0;
+}
+
+static int nvme_add_prpl(struct nvme_namespace *ns, u64 base)
+{
+    if (ns->prpl_len >= NVME_MAX_PRPL_ENTRIES)
+        return -1;
+
+    ns->prpl[ns->prpl_len++] = base;
+
+    return 0;
+}
+
+static int nvme_build_prpl(struct nvme_namespace *ns, void *op_buf, u16 count)
+{
+    int first_page = 1;
+    u32 base = (long)op_buf;
+    s32 size;
+
+    if (count > ns->max_req_size)
+        count = ns->max_req_size;
+
+    nvme_reset_prpl(ns);
+
+    size = count * ns->block_size;
+    /* Special case for transfers that fit into PRP1, but are unaligned */
+    if (((size + (base & ~NVME_PAGE_MASK)) <= NVME_PAGE_SIZE)) {
+        ns->prp1 = op_buf;
+        return count;
+    }
+
+    /* Every request has to be page aligned */
+    if (base & ~NVME_PAGE_MASK)
+        return 0;
+
+    /* Make sure a full block fits into the last chunk */
+    if (size & (ns->block_size - 1ULL))
+        return 0;
+
+    for (; size > 0; base += NVME_PAGE_SIZE, size -= NVME_PAGE_SIZE) {
+        if (first_page) {
+            /* First page is special */
+            ns->prp1 = (void*)base;
+            first_page = 0;
+            continue;
+        }
+        if (nvme_add_prpl(ns, base))
+            return 0;
+    }
+
+    return count;
 }
 
 static int
@@ -567,7 +637,7 @@ nvme_controller_enable(struct nvme_ctrl *ctrl)
     /* Populate namespace IDs */
     int ns_idx;
     for (ns_idx = 0; ns_idx < ctrl->ns_count; ns_idx++) {
-        nvme_probe_ns(ctrl, &ctrl->ns[ns_idx], ns_idx + 1);
+        nvme_probe_ns(ctrl, &ctrl->ns[ns_idx], ns_idx + 1, identify->mdts);
     }
 
     dprintf(3, "NVMe initialization complete!\n");
@@ -586,7 +656,14 @@ nvme_controller_enable(struct nvme_ctrl *ctrl)
 static void
 nvme_controller_setup(void *opaque)
 {
+    u8 skip_nonbootable = is_bootprio_strict();
     struct pci_device *pci = opaque;
+
+    if (skip_nonbootable && bootprio_find_pci_device(pci) < 0) {
+        dprintf(1, "skipping init of a non-bootable NVMe at %pP\n",
+                pci);
+        goto err;
+    }
 
     struct nvme_reg volatile *reg = pci_enable_membar(pci, PCI_BASE_ADDRESS_0);
     if (!reg)
@@ -649,25 +726,34 @@ nvme_cmd_readwrite(struct nvme_namespace *ns, struct disk_op_s *op, int write)
 {
     int res = DISK_RET_SUCCESS;
     u16 const max_blocks = NVME_PAGE_SIZE / ns->block_size;
-    u16 i;
+    u16 i, blocks;
 
     for (i = 0; i < op->count && res == DISK_RET_SUCCESS;) {
         u16 blocks_remaining = op->count - i;
-        u16 blocks = blocks_remaining < max_blocks ? blocks_remaining
-                                                   : max_blocks;
         char *op_buf = op->buf_fl + i * ns->block_size;
 
-        if (write) {
-            memcpy(ns->dma_buffer, op_buf, blocks * ns->block_size);
-        }
+        blocks = nvme_build_prpl(ns, op_buf, blocks_remaining);
+        if (blocks) {
+            res = nvme_io_readwrite(ns, op->lba + i, ns->prp1, blocks, write);
+            dprintf(5, "ns %u %s lba %llu+%u: %d\n", ns->ns_id, write ? "write"
+                                                                      : "read",
+                    op->lba, blocks, res);
+        } else {
+            blocks = blocks_remaining < max_blocks ? blocks_remaining
+                                                   : max_blocks;
 
-        res = nvme_io_readwrite(ns, op->lba + i, ns->dma_buffer, blocks, write);
-        dprintf(3, "ns %u %s lba %llu+%u: %d\n", ns->ns_id, write ? "write"
-                                                                  : "read",
-                op->lba + i, blocks, res);
+            if (write) {
+                memcpy(ns->dma_buffer, op_buf, blocks * ns->block_size);
+            }
 
-        if (!write && res == DISK_RET_SUCCESS) {
-            memcpy(op_buf, ns->dma_buffer, blocks * ns->block_size);
+            res = nvme_io_readwrite(ns, op->lba + i, ns->dma_buffer, blocks, write);
+            dprintf(5, "ns %u %s lba %llu+%u: %d\n", ns->ns_id, write ? "write"
+                                                                      : "read",
+                    op->lba + i, blocks, res);
+
+            if (!write && res == DISK_RET_SUCCESS) {
+                memcpy(op_buf, ns->dma_buffer, blocks * ns->block_size);
+            }
         }
 
         i += blocks;

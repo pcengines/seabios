@@ -72,6 +72,13 @@ endchoice
         help
             Support controlling of the boot order via the fw_cfg/CBFS
             "bootorder" file.
+    config HOST_BIOS_GEOMETRY
+        depends on BOOT
+        bool "Boot device bios geometry override"
+        default y
+        help
+            Support overriding bios (logical) geometry of boot devices via the
+            fw_cfg/CBFS "bios-geometry" file.
 
     config COREBOOT_FLASH
         depends on COREBOOT
@@ -516,6 +523,13 @@ menu "BIOS Tables"
             Required for QEMU 1.7 and newer.
             This option can be disabled for QEMU 1.6 and older
             to save some space in the ROM file.
+            If unsure, say Y.
+    config ACPI_PARSE
+        bool "Include ACPI DSDT parser."
+        default y
+        help
+            Support parsing ACPI DSDT for device probing.
+            Needed to find virtio-mmio devices.
             If unsure, say Y.
 endmenu
 
