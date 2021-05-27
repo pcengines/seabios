@@ -4,7 +4,7 @@ Change log for PC Engines fork of SeaBIOS
 Fourth digit in release number means PC Engines patch.
 
 ## [Unreleased]
-## [rel-1.14.0.1] - 2021-05-24
+## [rel-1.14.0.1] - 2021-05-27
 ### Changed
 - rebased on SeaBIOS official repository commit b0d61ec
 
@@ -123,7 +123,8 @@ Fourth digit in release number means PC Engines patch.
 ### Fixed
 - prevented from printing character multiple times
 
-[Unreleased]: https://github.com/pcengines/seabios/compare/rel-1.12.1.3...apu_support
+[Unreleased]: https://github.com/pcengines/seabios/compare/rel-1.14.0.1...apu_support
+[rel-1.14.0.1]: https://github.com/pcengines/seabios/compare/rel-1.12.1.2...rel-1.14.0.1
 [rel-1.12.1.3]: https://github.com/pcengines/seabios/compare/rel-1.12.1.2...rel-1.12.1.3
 [rel-1.12.1.2]: https://github.com/pcengines/seabios/compare/rel-1.12.1.1...rel-1.12.1.2
 [rel-1.12.1.1]: https://github.com/pcengines/seabios/compare/rel-1.12.0.1...rel-1.12.1.1
