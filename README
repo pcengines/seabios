@@ -15,3 +15,10 @@ configuration one can run "make menuconfig" prior to running "make".
 
 For other types of builds, and for more detailed developer
 documentation, please see the online documentation listed above.
+
+
+Issues
+-------
+
+If you want to create an issue, [here](https://github.com/pcengines/apu2-documentation/issues)
+is the right place for that.
