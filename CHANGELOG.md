@@ -4,6 +4,10 @@ Change log for PC Engines fork of SeaBIOS
 Fourth digit in release number means PC Engines patch.
 
 ## [Unreleased]
+## [rel-1.15.0.1] - 2021-12-17
+### Changed
+- rebased on SeaBIOS official repository commit 2dd4b9b
+
 ## [rel-1.14.0.1] - 2021-05-27
 ### Changed
 - rebased on SeaBIOS official repository commit b0d61ec
