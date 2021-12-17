@@ -155,7 +155,7 @@ static struct nvme_sqe *
 nvme_get_next_sqe(struct nvme_sq *sq, u8 opc, void *metadata, void *data, void *data2)
 {
     if (((sq->head + 1) & sq->common.mask) == sq->tail) {
-        dprintf(3, "submission queue is full");
+        dprintf(3, "submission queue is full\n");
         return NULL;
     }
 
@@ -234,11 +234,9 @@ nvme_admin_identify_ns(struct nvme_ctrl *ctrl, u32 ns_id)
 }
 
 static void
-nvme_probe_ns(struct nvme_ctrl *ctrl, struct nvme_namespace *ns, u32 ns_id,
-              u8 mdts)
+nvme_probe_ns(struct nvme_ctrl *ctrl, u32 ns_idx, u8 mdts)
 {
-    ns->ctrl  = ctrl;
-    ns->ns_id = ns_id;
+    u32 ns_id = ns_idx + 1;
 
     struct nvme_identify_ns *id = nvme_admin_identify_ns(ctrl, ns_id);
     if (!id) {
@@ -254,11 +252,20 @@ nvme_probe_ns(struct nvme_ctrl *ctrl, struct nvme_namespace *ns, u32 ns_id,
         goto free_buffer;
     }
 
-    ns->lba_count = id->nsze;
-    if (!ns->lba_count) {
+    if (!id->nsze) {
         dprintf(2, "NVMe NS %u is inactive.\n", ns_id);
         goto free_buffer;
     }
+
+    struct nvme_namespace *ns = malloc_fseg(sizeof(*ns));
+    if (!ns) {
+        warn_noalloc();
+        goto free_buffer;
+    }
+    memset(ns, 0, sizeof(*ns));
+    ns->ctrl  = ctrl;
+    ns->ns_id = ns_id;
+    ns->lba_count = id->nsze;
 
     struct nvme_lba_format *fmt = &id->lbaf[current_lba_format];
 
@@ -269,10 +276,11 @@ nvme_probe_ns(struct nvme_ctrl *ctrl, struct nvme_namespace *ns, u32 ns_id,
         /* If we see devices that trigger this path, we need to increase our
            buffer size. */
         warn_internalerror();
+        free(ns);
         goto free_buffer;
     }
 
-    ns->drive.cntl_id   = ns - ctrl->ns;
+    ns->drive.cntl_id   = ns_idx;
     ns->drive.removable = 0;
     ns->drive.type      = DTYPE_NVME;
     ns->drive.blksize   = ns->block_size;
@@ -289,11 +297,11 @@ nvme_probe_ns(struct nvme_ctrl *ctrl, struct nvme_namespace *ns, u32 ns_id,
     ns->dma_buffer = zalloc_page_aligned(&ZoneHigh, NVME_PAGE_SIZE);
 
     char *desc = znprintf(MAXDESCSIZE, "NVMe NS %u: %llu MiB (%llu %u-byte "
-                          "blocks + %u-byte metadata)\n",
+                          "blocks + %u-byte metadata)",
                           ns_id, (ns->lba_count * ns->block_size) >> 20,
                           ns->lba_count, ns->block_size, ns->metadata_size);
 
-    dprintf(3, "%s", desc);
+    dprintf(3, "%s\n", desc);
     boot_add_hd(&ns->drive, desc, bootprio_find_pci_device(ctrl->pci));
 
 free_buffer:
@@ -527,13 +535,6 @@ nvme_create_io_queues(struct nvme_ctrl *ctrl)
     return -1;
 }
 
-static void
-nvme_destroy_io_queues(struct nvme_ctrl *ctrl)
-{
-    nvme_destroy_sq(&ctrl->io_sq);
-    nvme_destroy_cq(&ctrl->io_cq);
-}
-
 /* Waits for CSTS.RDY to match rdy. Returns 0 on success. */
 static int
 nvme_wait_csts_rdy(struct nvme_ctrl *ctrl, unsigned rdy)
@@ -627,24 +628,15 @@ nvme_controller_enable(struct nvme_ctrl *ctrl)
         goto err_destroy_admin_sq;
     }
 
-    ctrl->ns = malloc_fseg(sizeof(*ctrl->ns) * ctrl->ns_count);
-    if (!ctrl->ns) {
-        warn_noalloc();
-        goto err_destroy_ioq;
-    }
-    memset(ctrl->ns, 0, sizeof(*ctrl->ns) * ctrl->ns_count);
-
     /* Populate namespace IDs */
     int ns_idx;
     for (ns_idx = 0; ns_idx < ctrl->ns_count; ns_idx++) {
-        nvme_probe_ns(ctrl, &ctrl->ns[ns_idx], ns_idx + 1, identify->mdts);
+        nvme_probe_ns(ctrl, ns_idx, identify->mdts);
     }
 
     dprintf(3, "NVMe initialization complete!\n");
     return 0;
 
- err_destroy_ioq:
-    nvme_destroy_io_queues(ctrl);
  err_destroy_admin_sq:
     nvme_destroy_sq(&ctrl->admin_sq);
  err_destroy_admin_cq:
