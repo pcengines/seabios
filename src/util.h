@@ -51,10 +51,6 @@ int boot_lchs_find_scsi_device(struct pci_device *pci, int target, int lun,
                                struct chs_s *chs);
 int boot_lchs_find_ata_device(struct pci_device *pci, int chanid, int slave,
                               struct chs_s *chs);
-int find_pxen(void);
-int find_usben(void);
-int find_scon(void);
-int find_com2en(void);
 
 // bootsplash.c
 void enable_vga_console(void);
@@ -95,9 +91,8 @@ void *find_acpi_table(u32 signature);
 u32 find_resume_vector(void);
 void acpi_reboot(void);
 void find_acpi_features(void);
-extern struct smbios_entry_point *SMBiosAddr;
-struct smbios_entry_point *get_smbios_entry_point();
-void copy_smbios(void *pos);
+void *smbios_get_tables(u32 *length);
+void copy_smbios_21(void *pos);
 void display_uuid(void);
 void copy_table(void *pos);
 void smbios_setup(void);

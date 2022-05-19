@@ -14,12 +14,25 @@
 #include "std/acpi.h" // struct rsdp_descriptor
 #include "std/mptable.h" // MPTABLE_SIGNATURE
 #include "std/pirtable.h" // struct pir_header
-#include "std/smbios.h" // struct smbios_entry_point
+#include "std/smbios.h" // struct smbios_21_entry_point
 #include "string.h" // memcpy
 #include "util.h" // copy_table
 #include "x86.h" // outb
 
 struct pir_header *PirAddr VARFSEG;
+
+static void *
+copy_fseg_table(const char *name, void *pos, u32 size)
+{
+    void *newpos = malloc_fseg(size);
+    if (!newpos) {
+        warn_noalloc();
+        return NULL;
+    }
+    dprintf(1, "Copying %s from %p to %p\n", name, pos, newpos);
+    memcpy(newpos, pos, size);
+    return newpos;
+}
 
 void
 copy_pir(void *pos)
@@ -33,14 +46,7 @@ copy_pir(void *pos)
         return;
     if (checksum(pos, p->size) != 0)
         return;
-    void *newpos = malloc_fseg(p->size);
-    if (!newpos) {
-        warn_noalloc();
-        return;
-    }
-    dprintf(1, "Copying PIR from %p to %p\n", pos, newpos);
-    memcpy(newpos, pos, p->size);
-    PirAddr = newpos;
+    PirAddr = copy_fseg_table("PIR", pos, p->size);
 }
 
 void
@@ -111,14 +117,7 @@ copy_acpi_rsdp(void *pos)
     int length = get_acpi_rsdp_length(pos, -1);
     if (length < 0)
         return;
-    void *newpos = malloc_fseg(length);
-    if (!newpos) {
-        warn_noalloc();
-        return;
-    }
-    dprintf(1, "Copying ACPI RSDP from %p to %p\n", pos, newpos);
-    memcpy(newpos, pos, length);
-    RsdpAddr = newpos;
+    RsdpAddr = copy_fseg_table("ACPI RSDP", pos, length);
 }
 
 void *find_acpi_rsdp(void)
@@ -266,12 +265,11 @@ find_acpi_features(void)
 
 // Iterator for each sub-table in the smbios blob.
 void *
-smbios_next(struct smbios_entry_point *smbios, void *prev)
+smbios_next(void *start, u32 length, void *prev)
 {
-    if (!smbios)
+    if (!start)
         return NULL;
-    void *start = (void*)smbios->structure_table_address;
-    void *end = start + smbios->structure_table_length;
+    void *end = start + length;
 
     if (!prev) {
         prev = start;
@@ -289,15 +287,24 @@ smbios_next(struct smbios_entry_point *smbios, void *prev)
     return prev;
 }
 
-struct smbios_entry_point *SMBiosAddr;
+void *
+smbios_21_next(struct smbios_21_entry_point *smbios, void *prev)
+{
+    if (!smbios)
+        return NULL;
+    return smbios_next((void*)smbios->structure_table_address,
+                       smbios->structure_table_length, prev);
+}
+
+static struct smbios_21_entry_point *SMBios21Addr;
 
 void
-copy_smbios(void *pos)
+copy_smbios_21(void *pos)
 {
-    if (SMBiosAddr)
+    if (SMBios21Addr)
         return;
-    struct smbios_entry_point *p = pos;
-    if (p->signature != SMBIOS_SIGNATURE)
+    struct smbios_21_entry_point *p = pos;
+    if (p->signature != SMBIOS_21_SIGNATURE)
         return;
     if (checksum(pos, 0x10) != 0)
         return;
@@ -305,22 +312,76 @@ copy_smbios(void *pos)
         return;
     if (checksum(pos+0x10, p->length-0x10) != 0)
         return;
-    struct smbios_entry_point *newpos = malloc_fseg(p->length);
-    if (!newpos) {
-        warn_noalloc();
+    SMBios21Addr = copy_fseg_table("SMBIOS", pos, p->length);
+}
+
+static struct smbios_30_entry_point *SMBios30Addr;
+
+static int
+valid_smbios_30_signature(struct smbios_30_entry_point *p)
+{
+    return !memcmp(p->signature, "_SM3_", 5);
+}
+
+void
+copy_smbios_30(void *pos)
+{
+    if (SMBios30Addr)
         return;
+    struct smbios_30_entry_point *p = pos;
+    if (!valid_smbios_30_signature(p))
+        return;
+    if (checksum(pos, p->length) != 0)
+        return;
+    SMBios30Addr = copy_fseg_table("SMBIOS 3.0", pos, p->length);
+}
+
+void *smbios_get_tables(u32 *length)
+{
+    if (SMBios30Addr) {
+        u32 addr32 = SMBios30Addr->structure_table_address;
+        if (addr32 == SMBios30Addr->structure_table_address) {
+            *length = SMBios30Addr->structure_table_max_size;
+            return (void *)addr32;
+        }
     }
-    dprintf(1, "Copying SMBIOS entry point from %p to %p\n", pos, newpos);
-    memcpy(newpos, pos, p->length);
-    SMBiosAddr = newpos;
+    if (SMBios21Addr) {
+        *length = SMBios21Addr->structure_table_length;
+        return (void *)SMBios21Addr->structure_table_address;
+    }
+    return NULL;
+}
+
+static int
+smbios_major_version(void)
+{
+    if (SMBios30Addr)
+        return SMBios30Addr->smbios_major_version;
+    else if (SMBios21Addr)
+        return SMBios21Addr->smbios_major_version;
+    else
+        return 0;
+}
+
+static int
+smbios_minor_version(void)
+{
+    if (SMBios30Addr)
+        return SMBios30Addr->smbios_minor_version;
+    else if (SMBios21Addr)
+        return SMBios21Addr->smbios_minor_version;
+    else
+        return 0;
 }
 
 void
 display_uuid(void)
 {
-    struct smbios_type_1 *tbl = smbios_next(SMBiosAddr, NULL);
+    u32 smbios_len = 0;
+    void *smbios_tables = smbios_get_tables(&smbios_len);
+    struct smbios_type_1 *tbl = smbios_next(smbios_tables, smbios_len, NULL);
     int minlen = offsetof(struct smbios_type_1, uuid) + sizeof(tbl->uuid);
-    for (; tbl; tbl = smbios_next(SMBiosAddr, tbl))
+    for (; tbl; tbl = smbios_next(smbios_tables, smbios_len, tbl))
         if (tbl->header.type == 1 && tbl->header.length >= minlen) {
             u8 *uuid = tbl->uuid;
             u8 empty_uuid[sizeof(tbl->uuid)] = { 0 };
@@ -333,9 +394,9 @@ display_uuid(void)
              * the encoding, but we follow dmidecode and assume big-endian
              * encoding.
              */
-            if (SMBiosAddr->smbios_major_version > 2 ||
-                (SMBiosAddr->smbios_major_version == 2 &&
-                 SMBiosAddr->smbios_minor_version >= 6)) {
+            if (smbios_major_version() > 2 ||
+                (smbios_major_version() == 2 &&
+                 smbios_minor_version() >= 6)) {
                 printf("Machine UUID"
                        " %02x%02x%02x%02x"
                        "-%02x%02x"
@@ -424,22 +485,24 @@ smbios_new_type_0(void *start,
 #define BIOS_NAME "SeaBIOS"
 #define BIOS_DATE "04/01/2014"
 
+/*
+ * Build tables using qtables as input, adding additional type 0
+ * table if necessary.
+ *
+ * @address and @length can't be NULL.  @max_structure_size and
+ * @number_of_structures are optional and can be NULL.
+ */
 static int
-smbios_romfile_setup(void)
+smbios_build_tables(struct romfile_s *f_tables,
+                    u64 *address, u32 *length,
+                    u16 *max_structure_size,
+                    u16 *number_of_structures)
 {
-    struct romfile_s *f_anchor = romfile_find("etc/smbios/smbios-anchor");
-    struct romfile_s *f_tables = romfile_find("etc/smbios/smbios-tables");
-    struct smbios_entry_point ep;
     struct smbios_type_0 *t0;
     u16 qtables_len, need_t0 = 1;
     u8 *qtables, *tables;
 
-    if (!f_anchor || !f_tables || f_anchor->size != sizeof(ep))
-        return 0;
-
-    f_anchor->copy(f_anchor, &ep, f_anchor->size);
-
-    if (f_tables->size != ep.structure_table_length)
+    if (f_tables->size != *length)
         return 0;
 
     qtables = malloc_tmphigh(f_tables->size);
@@ -448,56 +511,123 @@ smbios_romfile_setup(void)
         return 0;
     }
     f_tables->copy(f_tables, qtables, f_tables->size);
-    ep.structure_table_address = (u32)qtables; /* for smbios_next(), below */
+    qtables_len = f_tables->size;
 
     /* did we get a type 0 structure ? */
-    for (t0 = smbios_next(&ep, NULL); t0; t0 = smbios_next(&ep, t0))
+    for (t0 = smbios_next(qtables, qtables_len, NULL); t0;
+         t0 = smbios_next(qtables, qtables_len, t0)) {
         if (t0->header.type == 0) {
             need_t0 = 0;
             break;
         }
+    }
 
-    qtables_len = ep.structure_table_length;
     if (need_t0) {
         /* common case: add our own type 0, with 3 strings and 4 '\0's */
         u16 t0_len = sizeof(struct smbios_type_0) + strlen(BIOS_NAME) +
                      strlen(VERSION) + strlen(BIOS_DATE) + 4;
-        if (t0_len > (0xffff - ep.structure_table_length)) {
+        if (t0_len > (0xffff - *length)) {
             dprintf(1, "Insufficient space (%d bytes) to add SMBIOS type 0 table (%d bytes)\n",
-                    0xffff - ep.structure_table_length, t0_len);
+                    0xffff - *length, t0_len);
             need_t0 = 0;
         } else {
-            ep.structure_table_length += t0_len;
-            if (t0_len > ep.max_structure_size)
-                ep.max_structure_size = t0_len;
-            ep.number_of_structures++;
+            *length += t0_len;
+            if (max_structure_size && t0_len > *max_structure_size)
+                *max_structure_size = t0_len;
+            if (number_of_structures)
+                (*number_of_structures)++;
         }
     }
 
     /* allocate final blob and record its address in the entry point */
-    if (ep.structure_table_length > BUILD_MAX_SMBIOS_FSEG)
-        tables = malloc_high(ep.structure_table_length);
+    if (*length > BUILD_MAX_SMBIOS_FSEG)
+        tables = malloc_high(*length);
     else
-        tables = malloc_fseg(ep.structure_table_length);
+        tables = malloc_fseg(*length);
     if (!tables) {
         warn_noalloc();
         free(qtables);
         return 0;
     }
-    ep.structure_table_address = (u32)tables;
+    *address = (u32)tables;
 
     /* populate final blob */
     if (need_t0)
         tables = smbios_new_type_0(tables, BIOS_NAME, VERSION, BIOS_DATE);
     memcpy(tables, qtables, qtables_len);
     free(qtables);
+    return 1;
+}
+
+static int
+smbios_21_setup_entry_point(struct romfile_s *f_tables,
+                            struct smbios_21_entry_point *ep)
+{
+    u64 address = ep->structure_table_address;
+    u32 length = ep->structure_table_length;
+
+    if (!smbios_build_tables(f_tables,
+                             &address,
+                             &length,
+                             &ep->max_structure_size,
+                             &ep->number_of_structures))
+        return 0;
+
+    if ((u32)address != address || (u16)length != length) {
+        warn_internalerror();
+        return 0;
+    }
 
     /* finalize entry point */
-    ep.checksum -= checksum(&ep, 0x10);
-    ep.intermediate_checksum -= checksum((void *)&ep + 0x10, ep.length - 0x10);
+    ep->structure_table_address = address;
+    ep->structure_table_length = length;
+    ep->checksum -= checksum(ep, 0x10);
+    ep->intermediate_checksum -= checksum((void *)ep + 0x10, ep->length - 0x10);
 
-    copy_smbios(&ep);
+    copy_smbios_21(ep);
     return 1;
+}
+
+static int
+smbios_30_setup_entry_point(struct romfile_s *f_tables,
+                            struct smbios_30_entry_point *ep)
+{
+    if (!smbios_build_tables(f_tables,
+                             &ep->structure_table_address,
+                             &ep->structure_table_max_size,
+                             NULL, NULL))
+        return 0;
+
+    ep->checksum -= checksum(ep, sizeof(*ep));
+    copy_smbios_30(ep);
+    return 1;
+}
+
+static int
+smbios_romfile_setup(void)
+{
+    struct romfile_s *f_anchor = romfile_find("etc/smbios/smbios-anchor");
+    struct romfile_s *f_tables = romfile_find("etc/smbios/smbios-tables");
+    union {
+        struct smbios_21_entry_point ep21;
+        struct smbios_30_entry_point ep30;
+    } ep;
+
+    if (!f_anchor || !f_tables || f_anchor->size > sizeof(ep))
+        return 0;
+
+    f_anchor->copy(f_anchor, &ep, f_anchor->size);
+
+    if (f_anchor->size == sizeof(ep.ep21) &&
+        ep.ep21.signature == SMBIOS_21_SIGNATURE) {
+        return smbios_21_setup_entry_point(f_tables, &ep.ep21);
+    } else if (f_anchor->size == sizeof(ep.ep30) &&
+               valid_smbios_30_signature(&ep.ep30)) {
+        return smbios_30_setup_entry_point(f_tables, &ep.ep30);
+    } else {
+        dprintf(1, "Invalid SMBIOS signature at etc/smbios/smbios-anchor\n");
+        return 0;
+    }
 }
 
 void
@@ -514,5 +644,6 @@ copy_table(void *pos)
     copy_pir(pos);
     copy_mptable(pos);
     copy_acpi_rsdp(pos);
-    copy_smbios(pos);
+    copy_smbios_21(pos);
+    copy_smbios_30(pos);
 }

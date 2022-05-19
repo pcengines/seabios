@@ -776,10 +776,17 @@ interactive_bootmenu(void)
 {
     if (! CONFIG_BOOTMENU)
         return;
-
     int show_boot_menu = romfile_loadint("etc/show-boot-menu", 1);
     if (!show_boot_menu)
         return;
+
+    // skip menu if only one boot device and no TPM
+    if (show_boot_menu == 2 && !tpm_can_show_menu()
+        && !hlist_empty(&BootList) && !BootList.first->next) {
+        dprintf(1, "Only one boot device present. Skip boot menu.\n");
+        printf("\n");
+        return;
+    }
 
     int n_key = 0;
     pxen = find_pxen();

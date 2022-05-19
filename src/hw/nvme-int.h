@@ -103,7 +103,6 @@ struct nvme_ctrl {
     struct nvme_cq admin_cq;
 
     u32 ns_count;
-    struct nvme_namespace *ns;
 
     struct nvme_sq io_sq;
     struct nvme_cq io_cq;
@@ -120,14 +119,6 @@ struct nvme_namespace {
     u32 block_size;
     u32 metadata_size;
     u32 max_req_size;
-
-    /* Page aligned buffer of size NVME_PAGE_SIZE. */
-    char *dma_buffer;
-
-    /* Page List */
-    u32 prpl_len;
-    void *prp1;
-    u64 prpl[NVME_MAX_PRPL_ENTRIES];
 };
 
 /* Data structures for NVMe admin identify commands */
@@ -157,7 +148,6 @@ struct nvme_lba_format {
     u16 ms;
     u8  lbads;
     u8  rp;
-    u8  res;
 };
 
 struct nvme_identify_ns {
