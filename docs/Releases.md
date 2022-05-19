@@ -1,6 +1,25 @@
 History of SeaBIOS releases. Please see [download](Download) for
 information on obtaining these releases.
 
+SeaBIOS 1.16.0
+==============
+
+Available on 20220301. Major changes in this release:
+
+* SMBIOS v3.0 support on QEMU
+* Several bug fixes and code cleanups.
+
+SeaBIOS 1.15.0
+==============
+
+Available on 20211202. Major changes in this release:
+
+* Improved support for USB devices with multiple interfaces.
+* Support for USB XHCI devices using direct MMIO access (instead of PCI).
+* NVMe improvements.
+* Increased "f-segment" RAM allocations for BIOS tables.
+* Several bug fixes and code cleanups.
+
 SeaBIOS 1.14.0
 ==============
 
