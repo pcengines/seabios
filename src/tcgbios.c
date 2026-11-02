@@ -54,13 +54,22 @@ static int tpm_set_log_area(u8 *log_area_start_address,
     if (!log_area_start_address || !log_area_minimum_length)
         return -1;
 
-    memset(log_area_start_address, 0, log_area_minimum_length);
     tpm_state.log_area_start_address = log_area_start_address;
     tpm_state.log_area_minimum_length = log_area_minimum_length;
     tpm_state.log_area_next_entry = log_area_start_address;
     tpm_state.log_area_last_entry = NULL;
     tpm_state.entry_count = 0;
     return 0;
+}
+
+// Clear the log area and start a new, empty log
+static void tpm_log_reset(void)
+{
+    memset(tpm_state.log_area_start_address, 0,
+           tpm_state.log_area_minimum_length);
+    tpm_state.log_area_next_entry = tpm_state.log_area_start_address;
+    tpm_state.log_area_last_entry = NULL;
+    tpm_state.entry_count = 0;
 }
 
 static int
@@ -148,6 +157,22 @@ tpm_log_event(struct tpm_log_header *entry, int digest_len
 static TPMVersion TPM_version;
 static u32 tpm20_pcr_selection_size;
 static struct tpml_pcr_selection *tpm20_pcr_selection;
+
+// Set when the log area already contained a TCG compliant log (written by
+// coreboot) that SeaBIOS appends its own events to.
+static int tpm_log_preexisting;
+
+// Digest algorithms recorded in the TPM 2.0 log, as announced in the
+// TCG_EfiSpecIdEventStruct at the start of the log. Every log entry carries
+// a digest for each of these algorithms. When SeaBIOS writes the log header
+// this matches the active PCR banks of the TPM; when appending to a log
+// created by coreboot it matches the header coreboot has written.
+#define TPM20_LOG_MAX_ALGS 8
+static struct {
+    u16 hashAlg;
+    u16 digestSize;
+} tpm20_log_algs[TPM20_LOG_MAX_ALGS];
+static u32 tpm20_log_num_algs;
 
 // A 'struct tpm_log_entry' is a local data structure containing a
 // 'tpm_log_header' followed by space for the maximum supported
@@ -328,8 +353,15 @@ tpm20_write_EfiSpecIdEventStruct(void)
             return -1;
         }
 
+        if (numAlgs >= TPM20_LOG_MAX_ALGS) {
+            dprintf(DEBUG_tcg, "Too many active PCR banks\n");
+            return -1;
+        }
+
         event.hdr.digestSizes[numAlgs].algorithmId = be16_to_cpu(sel->hashAlg);
         event.hdr.digestSizes[numAlgs].digestSize = hsize;
+        tpm20_log_algs[numAlgs].hashAlg = be16_to_cpu(sel->hashAlg);
+        tpm20_log_algs[numAlgs].digestSize = hsize;
         numAlgs++;
 
         sel = nsel;
@@ -341,6 +373,7 @@ tpm20_write_EfiSpecIdEventStruct(void)
     }
 
     event.hdr.numberOfAlgorithms = numAlgs;
+    tpm20_log_num_algs = numAlgs;
     int event_size = offsetof(struct TCG_EfiSpecIdEventStruct
                               , digestSizes[numAlgs]);
     u8 *vendorInfoSize = (void*)&event + event_size;
@@ -369,10 +402,46 @@ tpm20_write_EfiSpecIdEventStruct(void)
  *
  * Returns the digest size; -1 on fatal error
  */
+/*
+ * Build the tpm2_digest_values data structure for a log entry (little
+ * endian). The digests follow the algorithms announced in the log's
+ * TCG_EfiSpecIdEventStruct, which may differ from the active PCR banks
+ * if the log has been started by coreboot.
+ */
+static int
+tpm20_build_log_digest(struct tpm_log_entry *le,
+                       const u8 *hashdata, u32 hashdata_len)
+{
+    if (!tpm20_log_num_algs)
+        return -1;
+
+    void *dest = le->hdr.digest + sizeof(struct tpm2_digest_values);
+    u32 i;
+    for (i = 0; i < tpm20_log_num_algs; i++) {
+        u16 hsize = tpm20_log_algs[i].digestSize;
+        struct tpm2_digest_value *v = dest;
+        if (dest + sizeof(*v) + hsize > (void*)le + sizeof(*le)) {
+            dprintf(DEBUG_tcg, "tpm_log_entry is too small\n");
+            return -1;
+        }
+        v->hashAlg = tpm20_log_algs[i].hashAlg;
+        tpm2_hash_data(v->hashAlg, hashdata, hashdata_len, v->hash);
+        dest += sizeof(*v) + hsize;
+    }
+
+    struct tpm2_digest_values *v = (void*)le->hdr.digest;
+    v->count = tpm20_log_num_algs;
+
+    return dest - (void*)le->hdr.digest;
+}
+
 static int
 tpm20_build_digest(struct tpm_log_entry *le,
                    const u8 *hashdata, u32 hashdata_len, int bigEndian)
 {
+    if (!bigEndian)
+        return tpm20_build_log_digest(le, hashdata, hashdata_len);
+
     if (!tpm20_pcr_selection)
         return -1;
 
@@ -463,6 +532,378 @@ tpm_build_digest(struct tpm_log_entry *le, const u8 *hashdata, u32 hashdata_len
         return tpm20_build_digest(le, hashdata, hashdata_len, bigEndian);
     }
     return -1;
+}
+
+
+/****************************************************************
+ * Event log handed over by coreboot
+ ****************************************************************/
+
+/*
+ * coreboot can record its measurements in one of three log formats
+ * (CONFIG_TPM_LOG_*):
+ *  - TPM 1.2 TCG format: placed at the LASA of the ACPI TCPA table,
+ *    starting with a "Spec ID Event00" event
+ *  - TPM 2.0 TCG format: placed at the LASA of the ACPI TPM2 table,
+ *    starting with a "Spec ID Event03" event (TCG_EfiSpecIdEventStruct)
+ *  - coreboot specific format: a table referenced by the coreboot tables
+ *    (CB_TAG_TPM_CB_LOG). The LASA of the ACPI table then points to an
+ *    empty (zeroed) area.
+ *
+ * If a TCG compliant log is found, SeaBIOS keeps it and appends its own
+ * events. Otherwise the log area is cleared, SeaBIOS writes the log header
+ * and replays the coreboot specific log (if any) before adding its own
+ * events.
+ */
+
+#define CB_TAG_TPM_CB_LOG               0x36
+#define TPM_CB_LOG_DIGEST_MAX_LENGTH    64
+#define TPM_CB_LOG_PCR_HASH_NAME        50
+#define TPM_CB_LOG_PCR_HASH_LEN         10
+
+struct tpm_cb_log_entry {
+    u32 pcr;
+    char digest_type[TPM_CB_LOG_PCR_HASH_LEN];
+    u8 digest[TPM_CB_LOG_DIGEST_MAX_LENGTH];
+    u32 digest_length;
+    char name[TPM_CB_LOG_PCR_HASH_NAME];
+} PACKED;
+
+struct tpm_cb_log_table {
+    u16 max_entries;
+    u16 num_entries;
+    struct tpm_cb_log_entry entries[0];
+} PACKED;
+
+struct cb_cbmem_entry {
+    u32 tag;
+    u32 size;
+    u64 cbmem_addr;
+} PACKED;
+
+// Minimum free space to keep in a log handed over by coreboot. coreboot
+// sizes its TCG logs for its own entries only, so move the log to a larger
+// buffer if it is too small to hold the events SeaBIOS will add.
+#define TPM_LOG_MIN_FREE_SPACE          (16 * 1024)
+#define TPM_LOG_RELOCATED_SIZE          (64 * 1024)
+
+static int
+tpm_log_find_tcg_spec_id(const char *signature, u32 min_size)
+{
+    u8 *start = tpm_state.log_area_start_address;
+    u32 len = tpm_state.log_area_minimum_length;
+    struct pcpes *pe = (void*)start;
+
+    if (len < sizeof(*pe) + min_size)
+        return -1;
+    if (pe->pcrindex != 0 || pe->eventtype != EV_NO_ACTION)
+        return -1;
+    if (pe->eventdatasize < min_size
+        || pe->eventdatasize > len - sizeof(*pe))
+        return -1;
+    if (memcmp(pe->event, signature, 16))
+        return -1;
+    return 0;
+}
+
+// Parse a TPM 2.0 TCG log; returns the offset of the end of the log or -1
+static int
+tpm20_log_parse_existing(void)
+{
+    u8 *start = tpm_state.log_area_start_address;
+    u8 *end = start + tpm_state.log_area_minimum_length;
+
+    if (tpm_log_find_tcg_spec_id("Spec ID Event03",
+                                 sizeof(struct TCG_EfiSpecIdEventStruct)))
+        return -1;
+
+    struct pcpes *pe = (void*)start;
+    struct TCG_EfiSpecIdEventStruct *sid = (void*)pe->event;
+    u32 numAlgs = sid->numberOfAlgorithms;
+    if (!numAlgs || numAlgs > TPM20_LOG_MAX_ALGS
+        || offsetof(struct TCG_EfiSpecIdEventStruct, digestSizes[numAlgs])
+           + sizeof(u8) > pe->eventdatasize) {
+        dprintf(DEBUG_tcg, "TCGBIOS: Malformed Spec ID event in log\n");
+        return -1;
+    }
+
+    u32 i;
+    for (i = 0; i < numAlgs; i++) {
+        u16 alg = sid->digestSizes[i].algorithmId;
+        u16 size = sid->digestSizes[i].digestSize;
+        if (tpm20_get_hash_buffersize(alg) != size) {
+            dprintf(DEBUG_tcg, "TCGBIOS: Unsupported hash 0x%x/%d in log\n",
+                    alg, size);
+            return -1;
+        }
+        tpm20_log_algs[i].hashAlg = alg;
+        tpm20_log_algs[i].digestSize = size;
+    }
+    tpm20_log_num_algs = numAlgs;
+
+    u8 *last = start;
+    u8 *p = pe->event + pe->eventdatasize;
+    u32 count = 1;
+    for (;;) {
+        // TCG_PCR_EVENT2: pcrindex, eventtype, digests, eventsize, event
+        struct tpm_log_header *hdr = (void*)p;
+        struct tpm2_digest_values *dv = (void*)hdr->digest;
+        u8 *q = (u8*)dv->digest;
+        if (q > end)
+            break;
+        // Unused (zeroed) space follows the last entry
+        if (!dv->count || dv->count > numAlgs)
+            break;
+
+        u32 d;
+        for (d = 0; d < dv->count; d++) {
+            struct tpm2_digest_value *v = (void*)q;
+            if (q + sizeof(*v) > end)
+                break;
+            for (i = 0; i < numAlgs; i++)
+                if (tpm20_log_algs[i].hashAlg == v->hashAlg)
+                    break;
+            if (i == numAlgs)
+                break;
+            q += sizeof(*v) + tpm20_log_algs[i].digestSize;
+        }
+        if (d != dv->count)
+            break;
+
+        struct tpm_log_trailer *t = (void*)q;
+        if (q + sizeof(*t) > end || t->eventdatasize > (u32)(end - t->event))
+            break;
+
+        last = p;
+        p = t->event + t->eventdatasize;
+        count++;
+    }
+
+    tpm_state.log_area_next_entry = p;
+    tpm_state.log_area_last_entry = last;
+    tpm_state.entry_count = count;
+    return 0;
+}
+
+// Parse a TPM 1.2 TCG log; returns -1 if there is no TCG log
+static int
+tpm12_log_parse_existing(void)
+{
+    u8 *start = tpm_state.log_area_start_address;
+    u8 *end = start + tpm_state.log_area_minimum_length;
+
+    if (tpm_log_find_tcg_spec_id("Spec ID Event00", 16))
+        return -1;
+
+    u8 *last = NULL;
+    u8 *p = start;
+    u32 count = 0;
+    static const u8 zero_digest[SHA1_BUFSIZE];
+    for (;;) {
+        struct pcpes *pe = (void*)p;
+        if (p + sizeof(*pe) > end)
+            break;
+        // Unused (zeroed) space follows the last entry
+        if (!pe->pcrindex && !pe->eventtype && !pe->eventdatasize
+            && !memcmp(pe->digest, zero_digest, sizeof(zero_digest)))
+            break;
+        if (pe->pcrindex >= 24 || pe->eventdatasize > (u32)(end - pe->event))
+            break;
+
+        last = p;
+        p = pe->event + pe->eventdatasize;
+        count++;
+    }
+
+    tpm_state.log_area_next_entry = p;
+    tpm_state.log_area_last_entry = last;
+    tpm_state.entry_count = count;
+    return 0;
+}
+
+// Move the log to a larger buffer and point the ACPI table to it
+static void
+tpm_log_relocate(void)
+{
+    u32 used = tpm_state.log_area_next_entry - tpm_state.log_area_start_address;
+    u32 len = tpm_state.log_area_minimum_length;
+    if (len - used >= TPM_LOG_MIN_FREE_SPACE)
+        return;
+
+    struct acpi_table_header *tbl = NULL;
+    u32 *laml = NULL;
+    u64 *lasa = NULL;
+    if (TPM_version == TPM_VERSION_2) {
+        struct tpm2_descriptor_rev2 *tpm2 = find_acpi_table(TPM2_SIGNATURE);
+        if (tpm2 && tpm2->length >= 76) {
+            tbl = (void*)tpm2;
+            laml = &tpm2->log_area_minimum_length;
+            lasa = &tpm2->log_area_start_address;
+        }
+    } else {
+        struct tcpa_descriptor_rev2 *tcpa = find_acpi_table(TCPA_SIGNATURE);
+        if (tcpa) {
+            tbl = (void*)tcpa;
+            laml = &tcpa->log_area_minimum_length;
+            lasa = &tcpa->log_area_start_address;
+        }
+    }
+    if (!tbl || *lasa != (u32)tpm_state.log_area_start_address)
+        return;
+
+    u32 newlen = TPM_LOG_RELOCATED_SIZE;
+    if (newlen < used + TPM_LOG_MIN_FREE_SPACE)
+        newlen = used + TPM_LOG_MIN_FREE_SPACE;
+    u8 *newlog = malloc_high(newlen);
+    if (!newlog) {
+        warn_noalloc();
+        return;
+    }
+    memcpy(newlog, tpm_state.log_area_start_address, used);
+    memset(newlog + used, 0, newlen - used);
+
+    dprintf(DEBUG_tcg, "TCGBIOS: Relocated log from %p (%u bytes) to %p"
+            " (%u bytes)\n", tpm_state.log_area_start_address, len,
+            newlog, newlen);
+
+    *lasa = (u32)newlog;
+    *laml = newlen;
+    tbl->checksum -= checksum(tbl, tbl->length);
+
+    u8 *last = tpm_state.log_area_last_entry;
+    tpm_state.log_area_last_entry =
+        last ? newlog + (last - tpm_state.log_area_start_address) : NULL;
+    tpm_state.log_area_start_address = newlog;
+    tpm_state.log_area_minimum_length = newlen;
+    tpm_state.log_area_next_entry = newlog + used;
+}
+
+/*
+ * Prepare the log area: keep a TCG compliant log left by coreboot,
+ * otherwise start with an empty log.
+ */
+static void
+tpm_log_init(void)
+{
+    tpm_log_preexisting = 0;
+
+    if (CONFIG_COREBOOT) {
+        int ret = -1;
+        switch (TPM_version) {
+        case TPM_VERSION_1_2:
+            ret = tpm12_log_parse_existing();
+            break;
+        case TPM_VERSION_2:
+            ret = tpm20_log_parse_existing();
+            break;
+        }
+        if (!ret) {
+            dprintf(DEBUG_tcg, "TCGBIOS: Appending to TCG log from coreboot"
+                    " (%u entries, %u bytes used)\n", tpm_state.entry_count,
+                    (u32)(tpm_state.log_area_next_entry
+                          - tpm_state.log_area_start_address));
+            tpm_log_preexisting = 1;
+            tpm_log_relocate();
+            return;
+        }
+        tpm20_log_num_algs = 0;
+    }
+
+    tpm_log_reset();
+}
+
+static int
+tpm_cb_log_get_alg(const struct tpm_cb_log_entry *cbe, u16 *hashAlg)
+{
+    char type[TPM_CB_LOG_PCR_HASH_LEN + 1];
+    memcpy(type, cbe->digest_type, TPM_CB_LOG_PCR_HASH_LEN);
+    type[TPM_CB_LOG_PCR_HASH_LEN] = '\0';
+
+    unsigned i;
+    for (i = 0; i < ARRAY_SIZE(hash_parameters); i++) {
+        if (strcmp(type, hash_parameters[i].name) == 0
+            && hash_parameters[i].hash_buffersize == cbe->digest_length) {
+            *hashAlg = hash_parameters[i].hashalg;
+            return 0;
+        }
+    }
+    return -1;
+}
+
+/*
+ * Copy the measurements from coreboot's specific log format into the TCG
+ * log. Must be called after the log header has been written.
+ */
+static void
+tpm_log_replay_coreboot(void)
+{
+    if (!CONFIG_COREBOOT)
+        return;
+
+    struct cb_header *cbh = find_cb_table();
+    if (!cbh)
+        return;
+    struct cb_cbmem_entry *cbref = find_cb_subtable(cbh, CB_TAG_TPM_CB_LOG);
+    if (!cbref || !cbref->cbmem_addr || cbref->cbmem_addr >= 0x100000000ULL)
+        return;
+
+    struct tpm_cb_log_table *tclt = (void*)(u32)cbref->cbmem_addr;
+    u32 num = tclt->num_entries;
+    if (num > tclt->max_entries) {
+        dprintf(DEBUG_tcg, "TCGBIOS: Malformed coreboot TPM log\n");
+        return;
+    }
+
+    dprintf(DEBUG_tcg, "TCGBIOS: Replaying %u entries of coreboot TPM log"
+            " at %p\n", num, tclt);
+
+    u32 i;
+    for (i = 0; i < num; i++) {
+        const struct tpm_cb_log_entry *cbe = &tclt->entries[i];
+        u16 hashAlg;
+        if (tpm_cb_log_get_alg(cbe, &hashAlg)) {
+            dprintf(DEBUG_tcg, "TCGBIOS: Skipping coreboot log entry %u:"
+                    " unsupported digest\n", i);
+            continue;
+        }
+
+        struct tpm_log_entry le = {
+            .hdr.pcrindex = cbe->pcr,
+            .hdr.eventtype = EV_ACTION,
+        };
+        int digest_len;
+        if (TPM_version == TPM_VERSION_2) {
+            u32 a;
+            for (a = 0; a < tpm20_log_num_algs; a++)
+                if (tpm20_log_algs[a].hashAlg == hashAlg)
+                    break;
+            if (a == tpm20_log_num_algs) {
+                dprintf(DEBUG_tcg, "TCGBIOS: Skipping coreboot log entry %u:"
+                        " hash 0x%x not in log\n", i, hashAlg);
+                continue;
+            }
+            // coreboot only extended a single PCR bank
+            struct tpm2_digest_values *dv = (void*)le.hdr.digest;
+            dv->count = 1;
+            dv->digest[0].hashAlg = hashAlg;
+            memcpy(dv->digest[0].hash, cbe->digest, cbe->digest_length);
+            digest_len = sizeof(*dv) + sizeof(dv->digest[0])
+                         + cbe->digest_length;
+        } else {
+            if (hashAlg != TPM2_ALG_SHA1) {
+                dprintf(DEBUG_tcg, "TCGBIOS: Skipping coreboot log entry %u:"
+                        " not SHA1\n", i);
+                continue;
+            }
+            digest_len = tpm12_build_digest_direct(&le, cbe->digest);
+        }
+
+        int len = 0;
+        while (len < TPM_CB_LOG_PCR_HASH_NAME && cbe->name[len])
+            len++;
+        if (tpm_log_event(&le.hdr, digest_len, cbe->name, len))
+            return;
+    }
 }
 
 
@@ -1022,7 +1463,10 @@ tpm_add_measurement_to_log(u32 pcrindex, u32 event_type,
         tpm_set_failure();
         return;
     }
-    tpm_build_digest(&le, hashdata, hashdata_length, 0);
+    // The log may hold a different set of digests than the PCR banks
+    digest_len = tpm_build_digest(&le, hashdata, hashdata_length, 0);
+    if (digest_len < 0)
+        return;
     tpm_log_event(&le.hdr, digest_len, event, event_length);
 }
 
@@ -1178,9 +1622,11 @@ tpm20_startup(void)
     if (ret)
         goto err_exit;
 
-    ret = tpm20_write_EfiSpecIdEventStruct();
-    if (ret)
-        goto err_exit;
+    if (!tpm_log_preexisting) {
+        ret = tpm20_write_EfiSpecIdEventStruct();
+        if (ret)
+            goto err_exit;
+    }
 
     return 0;
 
@@ -1226,12 +1672,17 @@ tpm_setup(void)
 
     TPM_working = 1;
 
+    tpm_log_init();
+
     if (runningOnXen())
         return;
 
     ret = tpm_startup();
     if (ret)
         return;
+
+    if (!tpm_log_preexisting)
+        tpm_log_replay_coreboot();
 
     tpm_smbios_measure();
     tpm_add_action(2, "Start Option ROM Scan");
