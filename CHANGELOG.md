@@ -4,6 +4,14 @@ Change log for PC Engines fork of SeaBIOS
 Fourth digit in release number means PC Engines patch.
 
 ## [Unreleased]
+## [rel-1.16.3.2] - 2026-11-03
+### Changed
+- TCG event log from coreboot is preserved and new measurements appended to it
+
+## [rel-1.16.3.1] - 2024-11-14
+### Changed
+- rebased on SeaBIOS official repository rel-tag 1.16.3
+
 ## [rel-1.16.0.1] - 2022-05-19
 ### Changed
 - rebased on SeaBIOS official repository commit dc88f9b
