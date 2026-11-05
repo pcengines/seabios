@@ -1517,6 +1517,128 @@ tpm_smbios_measure(void)
                                (u8 *)&pcctes, sizeof(pcctes));
 }
 
+/*
+ * Measure the ACPI tables passed to the OS (e.g. built by coreboot) into
+ * PCR 1, the platform configuration, like the SMBIOS tables.
+ *
+ * The tables are located and used before the TPM is set up, so they are
+ * measured here, once it is, from memory where the OS will find them.  Each
+ * table is measured separately with an EV_ACTION event
+ * "ACPI: <signature> <OEM table ID>", so that a change can be attributed to a
+ * table: the RSDP, the RSDT and XSDT, the tables they point to and the DSDT.
+ * The FACS is not measured, it holds fields which change at runtime (the
+ * waking vector and the global lock).
+ */
+#define ACPI_TABLE_MAX_LEN (16 * 1024 * 1024)
+
+// Copy a fixed size, possibly not NUL terminated, ACPI string without the
+// trailing padding (SeaBIOS' snprintf() has no precision support)
+static char *
+tpm_acpi_str(char *dst, const char *src, int len)
+{
+    memcpy(dst, src, len);
+    dst[len] = '\0';
+    while (len && (dst[len - 1] == ' ' || dst[len - 1] == '\0'))
+        dst[--len] = '\0';
+    return dst;
+}
+
+static void
+tpm_acpi_measure_data(const char *sig, const char *oemid, const void *data,
+                      u32 len)
+{
+    char event[32], s[5], o[9];
+    tpm_acpi_str(s, sig, 4);
+    if (oemid)
+        snprintf(event, sizeof(event), "ACPI: %s %s", s,
+                 tpm_acpi_str(o, oemid, 8));
+    else
+        snprintf(event, sizeof(event), "ACPI: %s", s);
+
+    dprintf(DEBUG_tcg, "TCGBIOS: Measuring %s at %p (%u bytes)\n"
+            , event, data, len);
+    tpm_add_measurement_to_log(1, EV_ACTION, event, strlen(event), data, len);
+}
+
+// Return a table pointer usable by SeaBIOS, or NULL if it is invalid
+static struct acpi_table_header *
+tpm_acpi_table(u64 addr)
+{
+    if (!addr || addr >= 0x100000000ULL)
+        return NULL;
+    struct acpi_table_header *tbl = (void*)(u32)addr;
+    if (tbl->length < sizeof(*tbl) || tbl->length > ACPI_TABLE_MAX_LEN)
+        return NULL;
+    return tbl;
+}
+
+static void
+tpm_acpi_measure_table(struct acpi_table_header *tbl)
+{
+    if (!tbl)
+        return;
+    tpm_acpi_measure_data((const char *)&tbl->signature,
+                          (const char *)tbl->oem_table_id, tbl, tbl->length);
+
+    if (tbl->signature != FACP_SIGNATURE)
+        return;
+    // The DSDT is referenced by the FADT only.  ACPI 2.0+ FADTs carry its
+    // 64-bit address (X_DSDT, at offset 140), which takes precedence.
+    struct fadt_descriptor_rev1 *fadt = (void*)tbl;
+    u64 dsdt = fadt->dsdt;
+    if (tbl->length >= 148) {
+        u64 x_dsdt = *(u64 *)((void*)tbl + 140);
+        if (x_dsdt)
+            dsdt = x_dsdt;
+    }
+    struct acpi_table_header *d = tpm_acpi_table(dsdt);
+    if (d && d->signature == DSDT_SIGNATURE)
+        tpm_acpi_measure_data("DSDT", (const char *)d->oem_table_id,
+                              d, d->length);
+}
+
+static void
+tpm_acpi_measure(void)
+{
+    struct rsdp_descriptor *rsdp = RsdpAddr;
+    if (!rsdp || rsdp->signature != RSDP_SIGNATURE)
+        return;
+
+    u32 rsdp_len = 20;  // ACPI 1.0 RSDP
+    if (rsdp->revision >= 2 && rsdp->length >= sizeof(*rsdp)
+        && rsdp->length <= 0x1000)
+        rsdp_len = rsdp->length;
+    tpm_acpi_measure_data("RSDP", NULL, rsdp, rsdp_len);
+
+    struct rsdt_descriptor_rev1 *rsdt =
+        (void*)tpm_acpi_table(rsdp->rsdt_physical_address);
+    if (rsdt && rsdt->signature != RSDT_SIGNATURE)
+        rsdt = NULL;
+    struct xsdt_descriptor_rev2 *xsdt = NULL;
+    if (rsdp->revision >= 2) {
+        xsdt = (void*)tpm_acpi_table(rsdp->xsdt_physical_address);
+        if (xsdt && xsdt->signature != XSDT_SIGNATURE)
+            xsdt = NULL;
+    }
+
+    if (rsdt)
+        tpm_acpi_measure_table((void*)rsdt);
+    if (xsdt)
+        tpm_acpi_measure_table((void*)xsdt);
+
+    // Both list the same tables; the XSDT is used by ACPI 2.0+ OSes
+    int i;
+    if (xsdt) {
+        int count = (xsdt->length - sizeof(*xsdt)) / sizeof(u64);
+        for (i = 0; i < count; i++)
+            tpm_acpi_measure_table(tpm_acpi_table(xsdt->table_offset_entry[i]));
+    } else if (rsdt) {
+        int count = (rsdt->length - sizeof(*rsdt)) / sizeof(u32);
+        for (i = 0; i < count; i++)
+            tpm_acpi_measure_table(tpm_acpi_table(rsdt->table_offset_entry[i]));
+    }
+}
+
 static int
 tpm12_assert_physical_presence(void)
 {
@@ -1689,6 +1811,7 @@ __tpm_setup(void)
     coreboot_cbfs_measure_pending(1);
 
     tpm_smbios_measure();
+    tpm_acpi_measure();
     tpm_add_action(2, "Start Option ROM Scan");
 }
 
