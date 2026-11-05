@@ -1649,12 +1649,12 @@ tpm_startup(void)
     return -1;
 }
 
-void
-tpm_setup(void)
-{
-    if (!CONFIG_TCGBIOS)
-        return;
+// Set once tpm_setup() is done; until then CBFS file measurements are deferred
+static int TPM_setup_done;
 
+static void
+__tpm_setup(void)
+{
     int ret = tpm_tpm2_probe();
     if (ret) {
         ret = tpm_tcpa_probe();
@@ -1684,8 +1684,55 @@ tpm_setup(void)
     if (!tpm_log_preexisting)
         tpm_log_replay_coreboot();
 
+    // Measure the CBFS files read before the TPM was available
+    TPM_setup_done = 1;
+    coreboot_cbfs_measure_pending(1);
+
     tpm_smbios_measure();
     tpm_add_action(2, "Start Option ROM Scan");
+}
+
+void
+tpm_setup(void)
+{
+    if (!CONFIG_TCGBIOS)
+        return;
+
+    __tpm_setup();
+
+    // No TPM or it failed: nothing to measure the deferred files with
+    TPM_setup_done = 1;
+    coreboot_cbfs_measure_pending(0);
+}
+
+/*
+ * Measure a CBFS file used by SeaBIOS, the same way coreboot measures the
+ * CBFS files it uses: an EV_ACTION event "CBFS: <name>" carrying the digest
+ * of the file contents, extended into PCR 2, or into PCR 3 for runtime data
+ * (the boot order, which can be changed at runtime).
+ *
+ * Returns 1 if the TPM is not set up yet and the caller must measure the file
+ * again later, 0 otherwise (measured, or no working TPM).
+ */
+int
+tpm_measure_cbfs_file(const char *name, const void *data, u32 len)
+{
+    if (!CONFIG_TCGBIOS)
+        return 0;
+    if (!TPM_setup_done)
+        return 1;
+    if (!tpm_is_working())
+        return 0;
+
+    u32 pcr = strcmp(name, "bootorder") == 0 ? 3 : 2;
+    char event[sizeof("CBFS: ") + 128];
+    snprintf(event, sizeof(event), "CBFS: %s", name);
+
+    dprintf(DEBUG_tcg, "TCGBIOS: Measuring %s (%u bytes) into PCR %u\n"
+            , event, len, pcr);
+    tpm_add_measurement_to_log(pcr, EV_ACTION, event, strlen(event)
+                               , data, len);
+    return 0;
 }
 
 static void
@@ -1779,6 +1826,25 @@ tpm_add_bcv(u32 bootdrv, const u8 *addr, u32 length)
     tpm_add_measurement_to_log(5, EV_IPL_PARTITION_DATA,
                                string, strlen(string),
                                addr + 0x1b8, 0x48);
+}
+
+/*
+ * Add measurement of a CBFS payload booted from the boot menu ("img/"
+ * files).  It is the IPL code of that boot, so it is measured into PCR 4
+ * like the boot code of other boot devices, not into PCR 2 which is final
+ * once the separators were added before booting.
+ */
+void
+tpm_add_cbfs_payload(const char *name, const u8 *addr, u32 length)
+{
+    if (!tpm_is_working())
+        return;
+
+    tpm_add_action(4, "Booting CBFS payload");
+
+    char event[sizeof("CBFS: ") + 128];
+    snprintf(event, sizeof(event), "CBFS: %s", name);
+    tpm_add_measurement_to_log(4, EV_IPL, event, strlen(event), addr, length);
 }
 
 void

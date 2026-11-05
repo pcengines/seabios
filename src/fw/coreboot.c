@@ -16,6 +16,7 @@
 #include "romfile.h" // romfile_findprefix
 #include "stacks.h" // yield
 #include "string.h" // memset
+#include "tcgbios.h" // tpm_measure_cbfs_file
 #include "util.h" // coreboot_preinit
 #include "coreboot.h" // cbfs_romfile overrides
 
@@ -389,17 +390,73 @@ struct cbfs_romfile_s {
     struct cbfs_file *fhdr;
     void *data;
     u32 rawsize, flags;
+    // TPM measurement state of the file contents
+    u8 measured, pending;
+    struct cbfs_romfile_s *next_pending;
 };
+
+// CBFS files read before the TPM was set up, to be measured afterwards
+static struct cbfs_romfile_s *CBFSPendingMeasure;
+
+// Measure the contents of a CBFS file the first time SeaBIOS uses them
+static void
+cbfs_measure(struct cbfs_romfile_s *cfile, const void *data, u32 len)
+{
+    if (!CONFIG_TCGBIOS || cfile->measured || cfile->pending)
+        return;
+    if (tpm_measure_cbfs_file(cfile->file.name, data, len)) {
+        // TPM not set up yet - measure the file once it is
+        cfile->pending = 1;
+        cfile->next_pending = CBFSPendingMeasure;
+        CBFSPendingMeasure = cfile;
+        return;
+    }
+    cfile->measured = 1;
+}
+
+static int __cbfs_copyfile(struct cbfs_romfile_s *cfile, void *dst, u32 maxlen);
+
+// Measure (if 'measure' is set) the CBFS files read before the TPM was set
+// up, by reading them again.  Called by the TPM code once it is set up.
+void
+coreboot_cbfs_measure_pending(int measure)
+{
+    if (!CONFIG_COREBOOT_FLASH || !CONFIG_TCGBIOS)
+        return;
+    // Measure in the order the files were first read
+    struct cbfs_romfile_s *list = NULL;
+    while (CBFSPendingMeasure) {
+        struct cbfs_romfile_s *cfile = CBFSPendingMeasure;
+        CBFSPendingMeasure = cfile->next_pending;
+        cfile->next_pending = list;
+        list = cfile;
+    }
+    while (list) {
+        struct cbfs_romfile_s *cfile = list;
+        list = cfile->next_pending;
+        cfile->next_pending = NULL;
+        cfile->pending = 0;
+        if (!measure) {
+            cfile->measured = 1;
+            continue;
+        }
+        u32 size = cfile->file.size;
+        void *buf = malloc_tmphigh(size ?: 1);
+        if (!buf) {
+            warn_noalloc();
+            continue;
+        }
+        int ret = __cbfs_copyfile(cfile, buf, size);
+        if (ret >= 0)
+            cbfs_measure(cfile, buf, ret);
+        free(buf);
+    }
+}
 
 // Copy a file to memory (uncompressing if necessary)
 static int
-cbfs_copyfile(struct romfile_s *file, void *dst, u32 maxlen)
+__cbfs_copyfile(struct cbfs_romfile_s *cfile, void *dst, u32 maxlen)
 {
-    if (!CONFIG_COREBOOT_FLASH)
-        return -1;
-
-    struct cbfs_romfile_s *cfile;
-    cfile = container_of(file, struct cbfs_romfile_s, file);
     u32 size = cfile->rawsize;
     void *src = cfile->data;
     if (cfile->flags) {
@@ -424,6 +481,21 @@ cbfs_copyfile(struct romfile_s *file, void *dst, u32 maxlen)
     }
     iomemcpy(dst, src, size);
     return size;
+}
+
+// Copy a file to memory and measure its contents into the TPM
+static int
+cbfs_copyfile(struct romfile_s *file, void *dst, u32 maxlen)
+{
+    if (!CONFIG_COREBOOT_FLASH)
+        return -1;
+
+    struct cbfs_romfile_s *cfile;
+    cfile = container_of(file, struct cbfs_romfile_s, file);
+    int ret = __cbfs_copyfile(cfile, dst, maxlen);
+    if (ret >= 0)
+        cbfs_measure(cfile, dst, ret);
+    return ret;
 }
 
 // Process CBFS links file.  The links file is a newline separated
@@ -461,6 +533,9 @@ process_links_file(void)
         }
         memcpy(cfile, cufile, sizeof(*cfile));
         strtcpy(cfile->file.name, linkname, sizeof(cfile->file.name));
+        // The link is measured under its own name when it is used
+        cfile->measured = cfile->pending = 0;
+        cfile->next_pending = NULL;
         romfile_add(&cfile->file);
     }
     free(links);
@@ -549,6 +624,9 @@ cbfs_run_payload(struct cbfs_file *fhdr)
         return;
     dprintf(1, "Run %s\n", fhdr->filename);
     struct cbfs_payload *pay = (void*)fhdr + be32_to_cpu(fhdr->offset);
+    // Measure the payload file as stored in CBFS before running it, as the
+    // IPL code of this boot.
+    tpm_add_cbfs_payload(fhdr->filename, (void*)pay, be32_to_cpu(fhdr->len));
     struct cbfs_payload_segment *seg = pay->segments;
     for (;;) {
         void *src = (void*)pay + be32_to_cpu(seg->offset);

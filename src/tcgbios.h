@@ -11,8 +11,10 @@ void tpm_prepboot(void);
 void tpm_s3_resume(void);
 void tpm_add_bcv(u32 bootdrv, const u8 *addr, u32 length);
 void tpm_add_cdrom(u32 bootdrv, const u8 *addr, u32 length);
+void tpm_add_cbfs_payload(const char *name, const u8 *addr, u32 length);
 void tpm_add_cdrom_catalog(const u8 *addr, u32 length);
 void tpm_option_rom(const void *addr, u32 len);
+int tpm_measure_cbfs_file(const char *name, const void *data, u32 len);
 int tpm_can_show_menu(void);
 void tpm_menu(void);
 
