@@ -172,6 +172,16 @@ usb_msc_lun_setup(struct usb_pipe *inpipe, struct usb_pipe *outpipe,
  ****************************************************************/
 
 // Configure a usb msc device.
+// Check if the device of a USB drive is still present
+int
+usb_msc_present(struct drive_s *drive)
+{
+    if (!CONFIG_USB_MSC)
+        return 1;
+    struct usbdrive_s *udrive = container_of(drive, struct usbdrive_s, drive);
+    return usb_pipe_present(udrive->bulkin);
+}
+
 int
 usb_msc_setup(struct usbdevice_s *usbdev)
 {

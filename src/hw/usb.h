@@ -250,6 +250,9 @@ int usb_xfer_time(struct usb_pipe *pipe, int datalen);
 struct usb_endpoint_descriptor *usb_find_desc(struct usbdevice_s *usbdev
                                               , int type, int dir);
 void usb_enumerate(struct usbhub_s *hub);
+int usb_pipe_present(struct usb_pipe *pipe);
+struct drive_s;
+int usb_drive_present(struct drive_s *drive);
 void usb_setup(void);
 
 #endif // usb.h

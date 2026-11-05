@@ -9,6 +9,7 @@ struct usb_pipe;
 
 // usb-xhci.c
 void xhci_setup(void);
+int xhci_pipe_present(struct usb_pipe *upipe);
 struct usb_pipe *xhci_realloc_pipe(struct usbdevice_s *usbdev
                                    , struct usb_pipe *upipe
                                    , struct usb_endpoint_descriptor *epdesc);

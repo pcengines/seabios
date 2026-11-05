@@ -1084,6 +1084,32 @@ fail:
     return NULL;
 }
 
+// Check if the device of a pipe is still connected to the root hub port it
+// was set up on.  A device which was unplugged, or which reconnected (e.g.
+// at SuperSpeed, which shows up on a USB 3 root port), leaves that port
+// disconnected or disabled.  For devices behind a hub only the root port can
+// be checked.
+int
+xhci_pipe_present(struct usb_pipe *upipe)
+{
+    if (!CONFIG_USB_XHCI)
+        return 1;
+    struct xhci_pipe *pipe = container_of(upipe, struct xhci_pipe, pipe);
+    struct usb_xhci_s *xhci = container_of(
+        pipe->pipe.cntl, struct usb_xhci_s, usb);
+    struct xhci_slotctx *slot = (void*)xhci->devs[pipe->slotid].ptr_low;
+    if (!slot)
+        return 0;
+    u32 port = ((slot->ctx[1] >> 16) & 0xff) - 1;
+    if (port >= xhci->ports)
+        return 1;
+    u32 portsc = readl(&xhci->pr[port].portsc);
+    if ((portsc & XHCI_PORTSC_CCS) && (portsc & XHCI_PORTSC_PED))
+        return 1;
+    xhci_print_port_state(1, __func__, port, portsc);
+    return 0;
+}
+
 struct usb_pipe *
 xhci_realloc_pipe(struct usbdevice_s *usbdev, struct usb_pipe *upipe
                   , struct usb_endpoint_descriptor *epdesc)

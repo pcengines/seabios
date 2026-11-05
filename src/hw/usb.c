@@ -5,6 +5,7 @@
 // This file may be distributed under the terms of the GNU LGPLv3 license.
 
 #include "biosvar.h" // GET_GLOBAL
+#include "block.h" // DTYPE_USB
 #include "config.h" // CONFIG_*
 #include "malloc.h" // free
 #include "output.h" // dprintf
@@ -111,6 +112,39 @@ usb_free_pipe(struct usbdevice_s *usbdev, struct usb_pipe *pipe)
     if (!pipe)
         return;
     usb_realloc_pipe(usbdev, pipe, NULL);
+}
+
+// Check if the device of a pipe is still present (where the controller
+// can tell)
+int
+usb_pipe_present(struct usb_pipe *pipe)
+{
+    ASSERT32FLAT();
+    if (!pipe)
+        return 0;
+    switch (pipe->type) {
+    case USB_TYPE_XHCI:
+        return xhci_pipe_present(pipe);
+    default:
+        return 1;
+    }
+}
+
+// Check if a USB drive is still present
+int
+usb_drive_present(struct drive_s *drive)
+{
+    ASSERT32FLAT();
+    switch (drive->type) {
+    case DTYPE_USB:
+    case DTYPE_USB_32:
+        return usb_msc_present(drive);
+    case DTYPE_UAS:
+    case DTYPE_UAS_32:
+        return usb_uas_present(drive);
+    default:
+        return 1;
+    }
 }
 
 // Send a message to the default control pipe of a device.
