@@ -770,10 +770,39 @@ static const char menuchars[] = {
     'u', 'v', 'w', 'x', 'y', 'z'
 };
 
+// Drop the boot entries of USB drives whose device is gone from the port it
+// was set up on.  Such entries are stale: e.g. a SuperSpeed device which
+// first connected at USB 2 speed and later reconnected at SuperSpeed, which
+// on xHCI shows up on a different (USB 3) root port (seen on PC Engines apu),
+// or a device unplugged after the USB enumeration.  Booting them would fail.
+static void
+boot_drop_stale_usb(void)
+{
+    if (!CONFIG_USB)
+        return;
+    struct bootentry_s *pos;
+    struct hlist_node *n;
+    hlist_for_each_entry_safe(pos, n, &BootList, node) {
+        if (pos->type != IPL_TYPE_FLOPPY && pos->type != IPL_TYPE_HARDDISK
+            && pos->type != IPL_TYPE_CDROM)
+            continue;
+        if (usb_drive_present(pos->drive))
+            continue;
+        dprintf(1, "Dropping boot entry of disconnected USB device: %s\n"
+                , pos->description);
+        hlist_del(&pos->node);
+        free(pos);
+    }
+}
+
 // Show IPL option menu.
 void
 interactive_bootmenu(void)
 {
+    // Check USB devices right before the boot options are offered, as late
+    // as possible for the devices to settle.
+    boot_drop_stale_usb();
+
     if (! CONFIG_BOOTMENU)
         return;
     int show_boot_menu = romfile_loadint("etc/show-boot-menu", 1);
@@ -804,6 +833,9 @@ interactive_bootmenu(void)
     enable_bootsplash();
     int scan_code = get_keystroke(menutime);
     disable_bootsplash();
+
+    // Devices may have changed ports while the prompt was shown
+    boot_drop_stale_usb();
 
     // 0x31 for N or n key
     if (scan_code == 0x31 && pxen == 1)

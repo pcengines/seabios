@@ -212,6 +212,16 @@ uas_add_lun(u32 lun, struct drive_s *tmpl_drv)
     return 0;
 }
 
+// Check if the device of a UAS drive is still present
+int
+usb_uas_present(struct drive_s *drive)
+{
+    if (!CONFIG_USB_UAS)
+        return 1;
+    struct uasdrive_s *udrive = container_of(drive, struct uasdrive_s, drive);
+    return usb_pipe_present(udrive->command);
+}
+
 int
 usb_uas_setup(struct usbdevice_s *usbdev)
 {
